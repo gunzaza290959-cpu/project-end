@@ -1,0 +1,739 @@
+import React, { useState, useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet-routing-machine';
+
+// ---------------------------------------------------------------------------
+// MOCKUP DATA
+// ---------------------------------------------------------------------------
+const MOCKUP_DATA = [
+    { id: "mock-1", name: "สำนักงานเขตหนองแขม", status: "surveyed", lat: 13.705681, lng: 100.358245, notes: "สำนักงานหลัก ประสานงานลงพื้นที่สำรวจเขตหนองแขม ความเรียบร้อย 100%", date: "2026-06-01" },
+    { id: "mock-2", name: "วัดหนองแขม", status: "surveyed", lat: 13.693352, lng: 100.342123, notes: "จุดประสานงานชุมชนวัดหนองแขม ตรวจสอบทางเท้าและทางลาดผู้พิการเรียบร้อย", date: "2026-06-03" },
+    { id: "mock-3", name: "มหาวิทยาลัยเอเชียอาคเนย์", status: "surveyed", lat: 13.706121, lng: 100.362142, notes: "สำรวจจุดจอดรถและระบบกล้องวงจรปิดรอบมหาวิทยาลัย", date: "2026-06-05" },
+    { id: "mock-4", name: "ตลาดศูนย์การค้าหนองแขม", status: "pending", lat: 13.704251, lng: 100.347852, notes: "ยังไม่ได้ตรวจ: จุดร้องเรียนขยะอุดตันทางระบายน้ำและแผงลอยรุกล้ำทางเท้า", date: "2026-06-12" },
+    { id: "mock-5", name: "สวนพุทธมณฑลสาย 3 (ฝั่งใต้)", status: "pending", lat: 13.719852, lng: 100.367123, notes: "ยังไม่ได้ตรวจ: สำรวจพื้นที่สีเขียวแห่งใหม่ ความพร้อมไฟส่องสว่างตอนกลางคืน", date: "2026-06-10" },
+    { id: "mock-6", name: "สถานีตำรวจนครบาลหนองแขม", status: "pending", lat: 13.676512, lng: 100.349123, notes: "ยังไม่ได้ตรวจ: จุดเช็กระบบตู้ยามและพื้นที่ทางร่วมทางแยกอันตราย", date: "2026-06-11" }
+];
+
+const NONG_KHAEM_CENTER = [13.7056, 100.3582];
+const TILE_URLS = {
+    dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+};
+const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+
+// ---------------------------------------------------------------------------
+// APP COMPONENT
+// ---------------------------------------------------------------------------
+function App() {
+    // --- State ---
+    const [surveyPoints, setSurveyPoints] = useState(() => {
+        const saved = localStorage.getItem("nongkhaem_survey_points");
+        if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+        return MOCKUP_DATA;
+    });
+
+    const [activeFilter, setActiveFilter] = useState('all');
+    const [searchText, setSearchText] = useState('');
+    const [onlineResults, setOnlineResults] = useState([]);
+    const [isSearchingOnline, setIsSearchingOnline] = useState(false);
+    const [theme, setTheme] = useState(() => localStorage.getItem("survey_map_theme") || "dark-theme");
+
+    // Floating list panel open/close
+    const [listOpen, setListOpen] = useState(true);
+
+    // Form modal
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [formPoint, setFormPoint] = useState({ id: '', name: '', status: 'surveyed', lat: NONG_KHAEM_CENTER[0], lng: NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
+
+    // Navigation
+    const [navActive, setNavActive] = useState(false);
+    const [routeSummary, setRouteSummary] = useState('');
+    const [routeInstructions, setRouteInstructions] = useState([]);
+
+    // Stats
+    const [stats, setStats] = useState({ total: 0, surveyed: 0, pending: 0, percent: 0, circleOffset: 213.6 });
+
+    // --- Refs ---
+    const mapRef = useRef(null);
+    const tileLayerRef = useRef(null);
+    const boundaryCircleRef = useRef(null);
+    const markersRef = useRef({});
+    const searchMarkerRef = useRef(null);
+    const routingControlRef = useRef(null);
+    const userLocationRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const searchRef = useRef(null);
+
+    // --- Effects ---
+    useEffect(() => {
+        localStorage.setItem("nongkhaem_survey_points", JSON.stringify(surveyPoints));
+        const total = surveyPoints.length;
+        const surveyed = surveyPoints.filter(p => p.status === 'surveyed').length;
+        const pending = total - surveyed;
+        const percent = total > 0 ? Math.round((surveyed / total) * 100) : 0;
+        const circumference = 213.628;
+        setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference });
+    }, [surveyPoints]);
+
+    useEffect(() => {
+        document.body.className = theme;
+        localStorage.setItem("survey_map_theme", theme);
+        if (tileLayerRef.current) {
+            tileLayerRef.current.setUrl(theme === 'dark-theme' ? TILE_URLS.dark : TILE_URLS.light);
+        }
+        if (boundaryCircleRef.current) {
+            boundaryCircleRef.current.setStyle({
+                color: theme === 'dark-theme' ? '#6366f1' : '#3b82f6',
+                fillColor: theme === 'dark-theme' ? '#6366f1' : '#3b82f6'
+            });
+        }
+    }, [theme]);
+
+    // Initialize Leaflet map
+    useEffect(() => {
+        const map = L.map("map", { zoomControl: false }).setView(NONG_KHAEM_CENTER, 14);
+        mapRef.current = map;
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        tileLayerRef.current = L.tileLayer(
+            theme === 'dark-theme' ? TILE_URLS.dark : TILE_URLS.light,
+            { attribution: ATTRIBUTION, maxZoom: 20 }
+        ).addTo(map);
+
+        boundaryCircleRef.current = L.circle(NONG_KHAEM_CENTER, {
+            radius: 3200,
+            color: theme === 'dark-theme' ? '#6366f1' : '#3b82f6',
+            fillColor: theme === 'dark-theme' ? '#6366f1' : '#3b82f6',
+            fillOpacity: 0.07,
+            weight: 1.5,
+            dashArray: '6, 8',
+            interactive: false
+        }).addTo(map);
+
+        map.on("click", (e) => {
+            setFormPoint({ id: '', name: '', status: 'surveyed', lat: e.latlng.lat, lng: e.latlng.lng, notes: '', date: new Date().toISOString().split('T')[0] });
+            setIsFormOpen(true);
+        });
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition((pos) => {
+                const latlng = [pos.coords.latitude, pos.coords.longitude];
+                userLocationRef.current = latlng;
+                const userIcon = L.divIcon({
+                    className: '',
+                    html: `<div style="width:14px;height:14px;background:#3b82f6;border:2px solid white;border-radius:50%;box-shadow:0 0 10px rgba(59,130,246,0.8);"></div>`,
+                    iconSize: [14, 14], iconAnchor: [7, 7]
+                });
+                L.marker(latlng, { icon: userIcon, zIndexOffset: 1000 }).addTo(map).bindPopup("ตำแหน่งปัจจุบัน");
+            }, () => {});
+        }
+
+        return () => { map.remove(); };
+    }, []);
+
+    // Render markers when data/filter changes
+    useEffect(() => {
+        if (!mapRef.current) return;
+        Object.values(markersRef.current).forEach(m => mapRef.current.removeLayer(m));
+        markersRef.current = {};
+
+        const filtered = surveyPoints.filter(p => activeFilter === 'all' || p.status === activeFilter);
+
+        filtered.forEach(point => {
+            const sc = point.status === 'surveyed' ? 'surveyed' : 'pending';
+            const iconHtml = point.status === 'surveyed'
+                ? '<i class="fa-solid fa-check"></i>'
+                : '<i class="fa-solid fa-triangle-exclamation"></i>';
+
+            const icon = L.divIcon({
+                className: 'custom-map-marker',
+                html: `<div class="marker-pin ${sc}">${iconHtml}</div>`,
+                iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -32]
+            });
+
+            const marker = L.marker([point.lat, point.lng], { icon });
+            const statusLabel = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ';
+            const badgeClass = point.status === 'surveyed' ? 'surveyed' : 'pending';
+
+            marker.bindPopup(`
+                <div class="popup-container">
+                    <div class="popup-header">
+                        <span class="popup-title">${point.name}</span>
+                        <span class="badge ${badgeClass}">${statusLabel}</span>
+                    </div>
+                    <p class="popup-desc">${point.notes || 'ไม่มีบันทึกเพิ่มเติม'}</p>
+                    <div class="popup-meta">
+                        <span><i class="fa-solid fa-calendar-days"></i> ${point.date || '-'}</span>
+                        <span><i class="fa-solid fa-location-crosshairs"></i> ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}</span>
+                    </div>
+                    <div class="popup-actions">
+                        <button class="popup-btn primary popup-nav-btn" data-lat="${point.lat}" data-lng="${point.lng}" data-name="${point.name.replace(/"/g,'&quot;')}">
+                            <i class="fa-solid fa-route"></i> นำทาง
+                        </button>
+                        <button class="popup-btn popup-edit-btn" data-id="${point.id}">
+                            <i class="fa-solid fa-pen-to-square"></i> แก้ไข
+                        </button>
+                        <button class="popup-btn popup-del-btn" data-id="${point.id}">
+                            <i class="fa-solid fa-trash-can"></i> ลบ
+                        </button>
+                    </div>
+                </div>
+            `);
+
+            marker.addTo(mapRef.current);
+            markersRef.current[point.id] = marker;
+        });
+
+        const onPopupOpen = (e) => {
+            const el = e.popup.getElement();
+            if (!el) return;
+            const navBtn = el.querySelector('.popup-nav-btn');
+            const editBtn = el.querySelector('.popup-edit-btn');
+            const delBtn = el.querySelector('.popup-del-btn');
+            if (navBtn) navBtn.onclick = () => startNavigation(parseFloat(navBtn.dataset.lat), parseFloat(navBtn.dataset.lng), navBtn.dataset.name);
+            if (editBtn) editBtn.onclick = () => openSurveyForm(editBtn.dataset.id);
+            if (delBtn) delBtn.onclick = () => deleteSurveyPoint(delBtn.dataset.id);
+        };
+
+        mapRef.current.on('popupopen', onPopupOpen);
+        return () => { if (mapRef.current) mapRef.current.off('popupopen', onPopupOpen); };
+    }, [surveyPoints, activeFilter]);
+
+    // ---------------------------------------------------------------------------
+    // NAVIGATION (OSRM)
+    // ---------------------------------------------------------------------------
+    const startNavigation = (destLat, destLng, destName) => {
+        if (!mapRef.current) return;
+        const startLatLng = userLocationRef.current || NONG_KHAEM_CENTER;
+        const startLabel = userLocationRef.current ? "ตำแหน่งปัจจุบัน" : "จุดศูนย์กลางหนองแขม";
+
+        if (routingControlRef.current) mapRef.current.removeControl(routingControlRef.current);
+
+        const routeColor = theme === 'dark-theme' ? "#6366f1" : "#3b82f6";
+        setRouteSummary("กำลังคำนวณเส้นทาง...");
+        setRouteInstructions([]);
+        setNavActive(true);
+        setListOpen(false); // close list to give room
+
+        routingControlRef.current = L.Routing.control({
+            waypoints: [L.latLng(startLatLng[0], startLatLng[1]), L.latLng(destLat, destLng)],
+            router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+            routeWhileDragging: false,
+            addWaypoints: false,
+            createMarker: () => null,
+            lineOptions: {
+                styles: [
+                    { color: '#000', opacity: 0.15, weight: 9 },
+                    { color: routeColor, opacity: 0.85, weight: 6 }
+                ]
+            }
+        }).addTo(mapRef.current);
+
+        routingControlRef.current.on('routesfound', (e) => {
+            const route = e.routes[0];
+            const distKm = (route.summary.totalDistance / 1000).toFixed(1);
+            const durMins = Math.round(route.summary.totalTime / 60);
+            setRouteSummary(`${distKm} กม. | ${durMins} นาที`);
+
+            const steps = [{ icon: "fa-solid fa-play", text: `เริ่มจาก: ${startLabel}`, dist: "0 ม." }];
+            route.instructions.forEach(step => {
+                let icon = "fa-solid fa-arrow-up";
+                const txt = step.text;
+                if (txt.includes("left")) icon = "fa-solid fa-arrow-left";
+                else if (txt.includes("right")) icon = "fa-solid fa-arrow-right";
+                else if (txt.includes("roundabout")) icon = "fa-solid fa-circle-notch";
+                else if (txt.includes("destination")) icon = "fa-solid fa-circle-dot text-green";
+                const distStr = step.distance >= 1000 ? `${(step.distance/1000).toFixed(1)} กม.` : `${Math.round(step.distance)} ม.`;
+                steps.push({ icon, text: txt, dist: distStr });
+            });
+            setRouteInstructions(steps);
+            mapRef.current.fitBounds(L.latLngBounds([L.latLng(startLatLng[0], startLatLng[1]), L.latLng(destLat, destLng)]), { padding: [60, 60] });
+        });
+
+        routingControlRef.current.on('routingerror', () => {
+            setRouteSummary("คำนวณเส้นทางขัดข้อง");
+            setRouteInstructions([{ icon: "fa-solid fa-circle-exclamation text-yellow", text: "ไม่สามารถคำนวณเส้นทางได้", dist: "" }]);
+        });
+    };
+
+    const cancelNavigation = () => {
+        if (routingControlRef.current) { mapRef.current.removeControl(routingControlRef.current); routingControlRef.current = null; }
+        setNavActive(false);
+        setRouteSummary('');
+        setRouteInstructions([]);
+        mapRef.current.setView(NONG_KHAEM_CENTER, 14);
+    };
+
+    // ---------------------------------------------------------------------------
+    // CRUD
+    // ---------------------------------------------------------------------------
+    const openSurveyForm = (id = null, lat = null, lng = null) => {
+        if (id) {
+            const p = surveyPoints.find(p => p.id === id);
+            if (p) { setFormPoint({ ...p }); setIsFormOpen(true); }
+        } else {
+            setFormPoint({ id: '', name: '', status: 'surveyed', lat: lat ?? NONG_KHAEM_CENTER[0], lng: lng ?? NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
+            setIsFormOpen(true);
+        }
+    };
+
+    const handleFormSubmit = (e) => {
+        e.preventDefault();
+        if (!formPoint.name.trim()) { alert("กรุณากรอกชื่อสถานที่สำรวจ"); return; }
+        if (formPoint.id) {
+            setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? { ...formPoint, name: formPoint.name.trim(), notes: formPoint.notes.trim() } : p));
+        } else {
+            setSurveyPoints(prev => [...prev, { ...formPoint, id: 'point-' + Date.now(), name: formPoint.name.trim(), notes: formPoint.notes.trim() }]);
+        }
+        setIsFormOpen(false);
+    };
+
+    const deleteSurveyPoint = (id) => {
+        if (confirm("ต้องการลบจุดสำรวจนี้ใช่หรือไม่?")) {
+            setSurveyPoints(prev => prev.filter(p => p.id !== id));
+            cancelNavigation();
+        }
+    };
+
+    // ---------------------------------------------------------------------------
+    // NOMINATIM SEARCH
+    // ---------------------------------------------------------------------------
+    const searchOnline = async () => {
+        const query = searchText.trim();
+        if (!query) { setOnlineResults([]); return; }
+        setIsSearchingOnline(true);
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=Nong+Khaem+${encodeURIComponent(query)}&limit=4&accept-language=th,en`);
+            setOnlineResults(await res.json());
+        } catch { setOnlineResults([]); }
+        finally { setIsSearchingOnline(false); }
+    };
+
+    const handleSearchItemClick = (item) => {
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        const shortName = item.display_name.split(',')[0];
+
+        if (searchMarkerRef.current) mapRef.current.removeLayer(searchMarkerRef.current);
+
+        const icon = L.divIcon({
+            className: 'custom-map-marker',
+            html: `<div class="marker-pin" style="background:#3b82f6;"><i class="fa-solid fa-star"></i></div>`,
+            iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -32]
+        });
+
+        const marker = L.marker([lat, lng], { icon }).addTo(mapRef.current);
+        searchMarkerRef.current = marker;
+
+        marker.bindPopup(`
+            <div class="popup-container">
+                <div class="popup-header">
+                    <span class="popup-title">${shortName}</span>
+                    <span class="badge" style="background:var(--primary-glow);color:var(--primary);">ค้นพบ</span>
+                </div>
+                <p class="popup-desc">คลิกปุ่มด้านล่างเพื่อดำเนินการ</p>
+                <div class="popup-actions">
+                    <button class="popup-btn primary popup-search-nav-btn" data-lat="${lat}" data-lng="${lng}" data-name="${shortName.replace(/"/g,'&quot;')}">
+                        <i class="fa-solid fa-route"></i> นำทาง
+                    </button>
+                    <button class="popup-btn popup-search-add-btn" data-lat="${lat}" data-lng="${lng}" data-name="${shortName.replace(/"/g,'&quot;')}">
+                        <i class="fa-solid fa-plus"></i> บันทึกจุดสำรวจ
+                    </button>
+                </div>
+            </div>
+        `).openPopup();
+
+        mapRef.current.flyTo([lat, lng], 16, { duration: 1.2 });
+
+        setTimeout(() => {
+            const el = marker.getPopup()?.getElement();
+            if (el) {
+                const nb = el.querySelector('.popup-search-nav-btn');
+                const ab = el.querySelector('.popup-search-add-btn');
+                if (nb) nb.onclick = () => startNavigation(lat, lng, shortName);
+                if (ab) ab.onclick = () => {
+                    setFormPoint(p => ({ ...p, lat, lng, name: shortName }));
+                    setIsFormOpen(true);
+                };
+            }
+        }, 100);
+
+        setOnlineResults([]);
+    };
+
+    const clearSearch = () => {
+        setSearchText('');
+        setOnlineResults([]);
+        if (searchMarkerRef.current) { mapRef.current.removeLayer(searchMarkerRef.current); searchMarkerRef.current = null; }
+    };
+
+    // ---------------------------------------------------------------------------
+    // EXPORT / IMPORT
+    // ---------------------------------------------------------------------------
+    const exportData = () => {
+        const blob = new Blob([JSON.stringify(surveyPoints, null, 4)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    };
+
+    const handleImportFile = (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const parsed = JSON.parse(ev.target.result);
+                if (Array.isArray(parsed) && parsed.every(p => p.id && p.name && p.status && p.lat && p.lng)) {
+                    setSurveyPoints(parsed);
+                    alert(`นำเข้าสำเร็จ ${parsed.length} จุด!`);
+                } else { alert("ไฟล์ JSON ผิดรูปแบบ"); }
+            } catch (err) { alert("อ่านไฟล์ไม่ได้: " + err.message); }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    };
+
+    const resetMockData = () => {
+        if (confirm("รีเซ็ตข้อมูลกลับเป็นตัวอย่างเดิม 6 จุดหรือไม่?")) {
+            setSurveyPoints([...MOCKUP_DATA]);
+            cancelNavigation();
+            if (searchMarkerRef.current) { mapRef.current.removeLayer(searchMarkerRef.current); searchMarkerRef.current = null; }
+        }
+    };
+
+    // Filter list
+    const listItems = surveyPoints.filter(p => {
+        if (activeFilter !== 'all' && p.status !== activeFilter) return false;
+        if (searchText.trim()) {
+            const q = searchText.toLowerCase();
+            return p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q));
+        }
+        return true;
+    });
+
+    const handleListItemClick = (point) => {
+        mapRef.current.flyTo([point.lat, point.lng], 16, { duration: 1 });
+        const marker = markersRef.current[point.id];
+        if (marker) setTimeout(() => marker.openPopup(), 1000);
+    };
+
+    // ---------------------------------------------------------------------------
+    // RENDER
+    // ---------------------------------------------------------------------------
+    return (
+        <div className="app-container">
+
+            {/* ===== TOPBAR ===== */}
+            <header className="topbar">
+
+                {/* Logo */}
+                <div className="logo-area">
+                    <div className="logo-icon">
+                        <i className="fa-solid fa-map-location-dot"></i>
+                    </div>
+                    <div className="logo-text">
+                        <h1>สำรวจหนองแขม</h1>
+                        <span className="subtitle">Nong Khaem Survey Map</span>
+                    </div>
+                </div>
+
+                <div className="topbar-divider"></div>
+
+                {/* Compact stats */}
+                <div className="stats-bar">
+                    {/* Mini progress ring */}
+                    <div className="progress-ring-sm">
+                        <svg width="36" height="36">
+                            <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3"/>
+                            <circle
+                                cx="18" cy="18" r="14" fill="none"
+                                stroke="#10b981" strokeWidth="3"
+                                strokeDasharray="87.96"
+                                strokeDashoffset={87.96 - (stats.percent / 100) * 87.96}
+                                style={{ transform: 'rotate(-90deg)', transformOrigin: '18px 18px', transition: 'stroke-dashoffset 0.6s ease' }}
+                            />
+                        </svg>
+                        <span className="pct">{stats.percent}%</span>
+                    </div>
+
+                    <div className="stat-pill total">
+                        <span className="dot"></span>
+                        <span className="count">{stats.total}</span>
+                        <span className="label">ทั้งหมด</span>
+                    </div>
+                    <div className="stat-pill done">
+                        <span className="dot"></span>
+                        <span className="count">{stats.surveyed}</span>
+                        <span className="label">สำรวจแล้ว</span>
+                    </div>
+                    <div className="stat-pill pending">
+                        <span className="dot"></span>
+                        <span className="count">{stats.pending}</span>
+                        <span className="label">ยังไม่ตรวจ</span>
+                    </div>
+                </div>
+
+                <div className="topbar-divider"></div>
+
+                {/* Search bar */}
+                <div className="topbar-search" ref={searchRef}>
+                    <div className="search-box">
+                        <i className="fa-solid fa-magnifying-glass search-icon"></i>
+                        <input
+                            type="text"
+                            value={searchText}
+                            onChange={e => setSearchText(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && searchOnline()}
+                            placeholder="ค้นหาสถานที่ในหนองแขม..."
+                        />
+                        {searchText && (
+                            <button className="clear-btn" onClick={clearSearch}>
+                                <i className="fa-solid fa-xmark"></i>
+                            </button>
+                        )}
+                        <button className="search-action-btn" onClick={searchOnline}>
+                            <i className="fa-solid fa-search"></i>
+                        </button>
+                    </div>
+
+                    {/* Search dropdown */}
+                    {(isSearchingOnline || onlineResults.length > 0) && (
+                        <div className="search-dropdown">
+                            {isSearchingOnline ? (
+                                <div className="search-result-item" style={{ justifyContent: 'center' }}>
+                                    <i className="fa-solid fa-spinner fa-spin"></i>&nbsp; ค้นหา...
+                                </div>
+                            ) : onlineResults.map((item, idx) => {
+                                const shortName = item.display_name.split(',')[0];
+                                return (
+                                    <div key={idx} className="search-result-item" onClick={() => handleSearchItemClick(item)}>
+                                        <i className="fa-solid fa-map-pin"></i>
+                                        <div>
+                                            <div className="result-title">{shortName}</div>
+                                            <div className="result-address">{item.display_name}</div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="topbar-divider"></div>
+
+                {/* Filter tabs */}
+                <div className="filter-tabs">
+                    {[
+                        { key: 'all', label: 'ทั้งหมด', icon: null },
+                        { key: 'surveyed', label: 'ตรวจแล้ว', icon: 'fa-solid fa-circle-check text-green' },
+                        { key: 'pending', label: 'ยังไม่ตรวจ', icon: 'fa-solid fa-triangle-exclamation text-yellow' }
+                    ].map(f => (
+                        <button key={f.key} className={`filter-tab ${activeFilter === f.key ? 'active' : ''}`} onClick={() => setActiveFilter(f.key)}>
+                            {f.icon && <i className={f.icon}></i>}
+                            {f.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Spacer */}
+                <div style={{ flex: 1 }}></div>
+
+                {/* Action buttons */}
+                <div className="topbar-actions">
+                    <button className="icon-btn primary" onClick={() => { const c = mapRef.current?.getCenter(); openSurveyForm(null, c?.lat, c?.lng); }} title="เพิ่มจุดสำรวจ">
+                        <i className="fa-solid fa-plus"></i>
+                        <span className="icon-btn-tooltip">เพิ่มจุดสำรวจ</span>
+                    </button>
+                    <button className="icon-btn" onClick={() => setListOpen(o => !o)} title="รายการจุดสำรวจ">
+                        <i className="fa-solid fa-list-ul"></i>
+                        <span className="icon-btn-tooltip">รายการ</span>
+                    </button>
+                    <button className="icon-btn" onClick={exportData} title="ส่งออก JSON">
+                        <i className="fa-solid fa-file-export"></i>
+                        <span className="icon-btn-tooltip">ส่งออก JSON</span>
+                    </button>
+                    <button className="icon-btn" onClick={() => fileInputRef.current.click()} title="นำเข้า JSON">
+                        <i className="fa-solid fa-file-import"></i>
+                        <span className="icon-btn-tooltip">นำเข้า JSON</span>
+                    </button>
+                    <button className="icon-btn danger" onClick={resetMockData} title="รีเซ็ตตัวอย่าง">
+                        <i className="fa-solid fa-rotate-left"></i>
+                        <span className="icon-btn-tooltip">รีเซ็ต</span>
+                    </button>
+                    <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".json" style={{ display: 'none' }} />
+
+                    <div className="topbar-divider"></div>
+
+                    <button className="theme-toggle-btn" onClick={() => setTheme(t => t === 'dark-theme' ? 'light-theme' : 'dark-theme')} title="เปลี่ยนธีม">
+                        <i className={theme === 'dark-theme' ? 'fa-solid fa-moon' : 'fa-solid fa-sun'}></i>
+                    </button>
+                </div>
+            </header>
+
+            {/* ===== MAP ===== */}
+            <main className="map-container-wrapper">
+                <div id="map" className="map-view"></div>
+
+                {/* Floating location list panel */}
+                {listOpen ? (
+                    <div className={`floating-list-panel ${listOpen ? '' : 'collapsed'}`}>
+                        <div className="float-panel-header">
+                            <div className="title">
+                                <i className="fa-solid fa-list-ul"></i>
+                                รายชื่อจุดสำรวจ
+                                <span className="badge" style={{ background: 'var(--primary-glow)', color: 'var(--primary)', marginLeft: 4 }}>
+                                    {listItems.length}
+                                </span>
+                            </div>
+                            <div className="hdr-actions">
+                                <button className="btn-add-float" onClick={() => { const c = mapRef.current?.getCenter(); openSurveyForm(null, c?.lat, c?.lng); }}>
+                                    <i className="fa-solid fa-plus"></i> เพิ่มจุด
+                                </button>
+                                <button className="btn-collapse" onClick={() => setListOpen(false)} title="ซ่อนรายการ">
+                                    <i className="fa-solid fa-chevron-left"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="locations-list">
+                            {listItems.length === 0 ? (
+                                <div className="empty-state">
+                                    <i className="fa-solid fa-location-dot"></i>
+                                    <p>{searchText ? 'ไม่พบข้อมูลที่ตรงกับการค้นหา' : 'ไม่มีจุดสำรวจในหมวดหมู่นี้'}</p>
+                                </div>
+                            ) : listItems.map(point => {
+                                const statusLabel = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ';
+                                const badgeClass = point.status === 'surveyed' ? 'surveyed' : 'pending';
+                                return (
+                                    <div key={point.id} className={`location-item ${point.status}`} onClick={() => handleListItemClick(point)}>
+                                        <div className="item-header">
+                                            <span className="item-title">{point.name}</span>
+                                            <span className={`badge ${badgeClass}`}>{statusLabel}</span>
+                                        </div>
+                                        <div className="item-details">
+                                            <p>{point.notes ? (point.notes.length > 55 ? point.notes.substring(0, 52) + '...' : point.notes) : 'ไม่มีบันทึกเพิ่มเติม'}</p>
+                                            <div className="item-meta">
+                                                <span><i className="fa-solid fa-calendar-day"></i> {point.date || '-'}</span>
+                                                <span><i className="fa-solid fa-location-arrow"></i> {point.lat.toFixed(4)}, {point.lng.toFixed(4)}</span>
+                                            </div>
+                                        </div>
+                                        <div className="item-actions">
+                                            <button className="item-action-btn" onClick={e => { e.stopPropagation(); startNavigation(point.lat, point.lng, point.name); }}>
+                                                <i className="fa-solid fa-route text-green"></i> นำทาง
+                                            </button>
+                                            <button className="item-action-btn" onClick={e => { e.stopPropagation(); openSurveyForm(point.id); }}>
+                                                <i className="fa-solid fa-pen-to-square"></i> แก้ไข
+                                            </button>
+                                            <button className="item-action-btn delete" onClick={e => { e.stopPropagation(); deleteSurveyPoint(point.id); }}>
+                                                <i className="fa-solid fa-trash-can"></i> ลบ
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ) : (
+                    /* Floating circle trigger when list is hidden */
+                    <button className="float-trigger-btn" onClick={() => setListOpen(true)} title="แสดงรายการจุดสำรวจ">
+                        <i className="fa-solid fa-map-marker-alt"></i>
+                        <span className="badge-count">{listItems.length}</span>
+                    </button>
+                )}
+
+                {/* Navigation directions overlay */}
+                {navActive && (
+                    <div className="navigation-overlay-panel">
+                        <div className="nav-overlay-header">
+                            <div className="nav-icon"><i className="fa-solid fa-route"></i></div>
+                            <div className="nav-title-box">
+                                <h3>การนำทาง</h3>
+                                <p>{routeSummary}</p>
+                            </div>
+                            <button className="nav-close-btn" onClick={cancelNavigation}>
+                                <i className="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                        <div className="nav-instructions">
+                            {routeInstructions.map((step, idx) => (
+                                <div key={idx} className="nav-instruction-item">
+                                    <div className="icon"><i className={step.icon}></i></div>
+                                    <div className="text">
+                                        <div>{step.text}</div>
+                                        <div className="distance">{step.dist}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Map hint toast */}
+                <div className="map-helper-toast">
+                    <i className="fa-solid fa-circle-info"></i> คลิกบนแผนที่เพื่อเพิ่มจุดสำรวจได้เลย
+                </div>
+            </main>
+
+            {/* ===== FORM MODAL ===== */}
+            {isFormOpen && (
+                <div className="modal-overlay">
+                    <div className="modal-card">
+                        <header className="modal-header">
+                            <h3>{formPoint.id ? 'แก้ไขจุดสำรวจ' : 'เพิ่มจุดสำรวจใหม่'}</h3>
+                            <button className="modal-close" onClick={() => setIsFormOpen(false)}>
+                                <i className="fa-solid fa-xmark"></i>
+                            </button>
+                        </header>
+                        <form onSubmit={handleFormSubmit} id="surveyForm">
+                            <div className="form-group">
+                                <label>ชื่อจุดสำรวจ / สถานที่ *</label>
+                                <input type="text" value={formPoint.name} onChange={e => setFormPoint(p => ({ ...p, name: e.target.value }))} placeholder="เช่น โรงเรียนวัดหนองแขม, หน้าตลาด..." maxLength="80" required />
+                            </div>
+                            <div className="form-group">
+                                <label>สถานะการสำรวจ *</label>
+                                <div className="status-radio-group">
+                                    <label className="status-radio-label surveyed">
+                                        <input type="radio" name="formStatus" value="surveyed" checked={formPoint.status === 'surveyed'} onChange={() => setFormPoint(p => ({ ...p, status: 'surveyed' }))} />
+                                        <span className="custom-radio"></span>
+                                        <i className="fa-solid fa-circle-check"></i> สำรวจแล้ว
+                                    </label>
+                                    <label className="status-radio-label pending">
+                                        <input type="radio" name="formStatus" value="pending" checked={formPoint.status === 'pending'} onChange={() => setFormPoint(p => ({ ...p, status: 'pending' }))} />
+                                        <span className="custom-radio"></span>
+                                        <i className="fa-solid fa-triangle-exclamation"></i> ยังไม่ตรวจ
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="form-row">
+                                <div className="form-group col">
+                                    <label>ละติจูด</label>
+                                    <input type="number" value={formPoint.lat} readOnly />
+                                </div>
+                                <div className="form-group col">
+                                    <label>ลองจิจูด</label>
+                                    <input type="number" value={formPoint.lng} readOnly />
+                                </div>
+                            </div>
+                            <p className="form-hint"><i className="fa-solid fa-info-circle"></i> คลิกบนแผนที่เพื่อย้ายพิกัด</p>
+                            <div className="form-group">
+                                <label>บันทึกเพิ่มเติม</label>
+                                <textarea rows="3" value={formPoint.notes} onChange={e => setFormPoint(p => ({ ...p, notes: e.target.value }))} placeholder="ข้อมูลปัญหา, ข้อเสนอแนะ..." maxLength="200" />
+                            </div>
+                            <div className="form-group">
+                                <label>วันที่ลงพื้นที่</label>
+                                <input type="date" value={formPoint.date} onChange={e => setFormPoint(p => ({ ...p, date: e.target.value }))} />
+                            </div>
+                            <div className="modal-actions">
+                                <button type="button" className="btn btn-secondary" onClick={() => setIsFormOpen(false)}>ยกเลิก</button>
+                                <button type="submit" className="btn btn-primary">บันทึกข้อมูล</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default App;
