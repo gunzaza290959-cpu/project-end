@@ -1086,7 +1086,159 @@ html, body, #root {
 .btn-secondary:hover { background: var(--bg-card-hover); color: var(--text-primary); }
 
 /* --------------------------------------------------------------------------
-   10. RESPONSIVE
+   10. LOGIN SCREEN (GLASSMORPHISM)
+   -------------------------------------------------------------------------- */
+.login-screen {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: url('https://images.unsplash.com/photo-1542273917363-3b1817f69a2d?q=80&w=2500&auto=format&fit=crop') no-repeat center center;
+    background-size: cover;
+    position: relative;
+}
+
+.login-screen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(11, 15, 25, 0.7); /* Dark overlay */
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.light-theme .login-screen::before {
+    background: rgba(241, 245, 249, 0.4);
+}
+
+.login-card {
+    position: relative;
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg-modal);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 40px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: fadeUp 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes fadeUp {
+    0% { opacity: 0; transform: translateY(30px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+.login-logo {
+    width: 64px;
+    height: 64px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, var(--primary), #818cf8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 28px;
+    box-shadow: 0 8px 24px var(--primary-glow);
+    margin-bottom: 24px;
+}
+
+.login-card h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.login-card p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 32px;
+    text-align: center;
+}
+
+.login-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.login-form .form-group {
+    margin-bottom: 0;
+}
+
+.login-form input {
+    width: 100%;
+    padding: 14px 16px;
+    background: rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+.light-theme .login-form input {
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.login-form input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px var(--primary-glow);
+    background: var(--bg-input);
+}
+
+.login-btn {
+    width: 100%;
+    padding: 14px;
+    background: var(--primary);
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 8px;
+    box-shadow: 0 8px 20px var(--primary-glow);
+}
+
+.login-btn:hover {
+    background: var(--primary-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px var(--primary-glow);
+}
+
+.login-error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    padding: 10px 14px;
+    border-radius: var(--border-radius-sm);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    animation: shake 0.4s ease;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    50% { transform: translateX(5px); }
+    75% { transform: translateX(-5px); }
+}
+
+/* --------------------------------------------------------------------------
+   11. RESPONSIVE
    -------------------------------------------------------------------------- */
 @media (max-width: 900px) {
     .stats-bar { display: none; }
@@ -1099,4 +1251,5 @@ html, body, #root {
     .filter-tabs { display: none; }
     .floating-list-panel { width: calc(100vw - 24px); }
     .navigation-overlay-panel { right: 8px; left: 8px; width: calc(100% - 16px); top: auto; bottom: 16px; }
+    .login-card { margin: 20px; padding: 30px 24px; }
 }

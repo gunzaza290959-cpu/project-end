@@ -22,10 +22,73 @@ const TILE_URLS = {
 const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 // ---------------------------------------------------------------------------
+// LOGIN COMPONENT
+// ---------------------------------------------------------------------------
+function LoginScreen({ onLogin }) {
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        // Mock authentication validation
+        if (username === 'admin' && password === 'admin123') {
+            onLogin();
+        } else {
+            setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+        }
+    };
+
+    return (
+        <div className="login-screen">
+            <div className="login-card">
+                <div className="login-logo">
+                    <i className="fa-solid fa-map-location-dot"></i>
+                </div>
+                <h2>เข้าสู่ระบบ</h2>
+                <p>Nong Khaem Survey Map</p>
+                
+                {error && (
+                    <div className="login-error">
+                        <i className="fa-solid fa-triangle-exclamation"></i>
+                        {error}
+                    </div>
+                )}
+
+                <form className="login-form" onSubmit={handleSubmit}>
+                    <div className="form-group">
+                        <input 
+                            type="text" 
+                            placeholder="ชื่อผู้ใช้งาน (admin)" 
+                            value={username}
+                            onChange={(e) => { setUsername(e.target.value); setError(''); }}
+                            required 
+                        />
+                    </div>
+                    <div className="form-group">
+                        <input 
+                            type="password" 
+                            placeholder="รหัสผ่าน (admin123)" 
+                            value={password}
+                            onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                            required 
+                        />
+                    </div>
+                    <button type="submit" className="login-btn">เข้าสู่ระบบ</button>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // APP COMPONENT
 // ---------------------------------------------------------------------------
 function App() {
-    // --- State ---
+    // --- Auth State ---
+    const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem("nongkhaem_auth") === "true");
+
+    // --- Data State ---
     const [surveyPoints, setSurveyPoints] = useState(() => {
         const saved = localStorage.getItem("nongkhaem_survey_points");
         if (saved) { try { return JSON.parse(saved); } catch (e) {} }
@@ -66,16 +129,6 @@ function App() {
 
     // --- Effects ---
     useEffect(() => {
-        localStorage.setItem("nongkhaem_survey_points", JSON.stringify(surveyPoints));
-        const total = surveyPoints.length;
-        const surveyed = surveyPoints.filter(p => p.status === 'surveyed').length;
-        const pending = total - surveyed;
-        const percent = total > 0 ? Math.round((surveyed / total) * 100) : 0;
-        const circumference = 213.628;
-        setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference });
-    }, [surveyPoints]);
-
-    useEffect(() => {
         document.body.className = theme;
         localStorage.setItem("survey_map_theme", theme);
         if (tileLayerRef.current) {
@@ -89,8 +142,20 @@ function App() {
         }
     }, [theme]);
 
-    // Initialize Leaflet map
     useEffect(() => {
+        localStorage.setItem("nongkhaem_survey_points", JSON.stringify(surveyPoints));
+        const total = surveyPoints.length;
+        const surveyed = surveyPoints.filter(p => p.status === 'surveyed').length;
+        const pending = total - surveyed;
+        const percent = total > 0 ? Math.round((surveyed / total) * 100) : 0;
+        const circumference = 213.628;
+        setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference });
+    }, [surveyPoints]);
+
+    // Initialize Leaflet map (only when authenticated)
+    useEffect(() => {
+        if (!isAuthenticated) return;
+
         const map = L.map("map", { zoomControl: false }).setView(NONG_KHAEM_CENTER, 14);
         mapRef.current = map;
         L.control.zoom({ position: 'topright' }).addTo(map);
@@ -129,11 +194,11 @@ function App() {
         }
 
         return () => { map.remove(); };
-    }, []);
+    }, [isAuthenticated]); // Re-run if auth state changes
 
     // Render markers when data/filter changes
     useEffect(() => {
-        if (!mapRef.current) return;
+        if (!mapRef.current || !isAuthenticated) return;
         Object.values(markersRef.current).forEach(m => mapRef.current.removeLayer(m));
         markersRef.current = {};
 
@@ -197,7 +262,7 @@ function App() {
 
         mapRef.current.on('popupopen', onPopupOpen);
         return () => { if (mapRef.current) mapRef.current.off('popupopen', onPopupOpen); };
-    }, [surveyPoints, activeFilter]);
+    }, [surveyPoints, activeFilter, isAuthenticated]);
 
     // ---------------------------------------------------------------------------
     // NAVIGATION (OSRM)
@@ -257,11 +322,14 @@ function App() {
     };
 
     const cancelNavigation = () => {
-        if (routingControlRef.current) { mapRef.current.removeControl(routingControlRef.current); routingControlRef.current = null; }
+        if (routingControlRef.current && mapRef.current) { 
+            mapRef.current.removeControl(routingControlRef.current); 
+            routingControlRef.current = null; 
+        }
         setNavActive(false);
         setRouteSummary('');
         setRouteInstructions([]);
-        mapRef.current.setView(NONG_KHAEM_CENTER, 14);
+        if (mapRef.current) mapRef.current.setView(NONG_KHAEM_CENTER, 14);
     };
 
     // ---------------------------------------------------------------------------
@@ -364,7 +432,10 @@ function App() {
     const clearSearch = () => {
         setSearchText('');
         setOnlineResults([]);
-        if (searchMarkerRef.current) { mapRef.current.removeLayer(searchMarkerRef.current); searchMarkerRef.current = null; }
+        if (searchMarkerRef.current && mapRef.current) { 
+            mapRef.current.removeLayer(searchMarkerRef.current); 
+            searchMarkerRef.current = null; 
+        }
     };
 
     // ---------------------------------------------------------------------------
@@ -398,7 +469,10 @@ function App() {
         if (confirm("รีเซ็ตข้อมูลกลับเป็นตัวอย่างเดิม 6 จุดหรือไม่?")) {
             setSurveyPoints([...MOCKUP_DATA]);
             cancelNavigation();
-            if (searchMarkerRef.current) { mapRef.current.removeLayer(searchMarkerRef.current); searchMarkerRef.current = null; }
+            if (searchMarkerRef.current && mapRef.current) { 
+                mapRef.current.removeLayer(searchMarkerRef.current); 
+                searchMarkerRef.current = null; 
+            }
         }
     };
 
@@ -413,14 +487,30 @@ function App() {
     });
 
     const handleListItemClick = (point) => {
+        if (!mapRef.current) return;
         mapRef.current.flyTo([point.lat, point.lng], 16, { duration: 1 });
         const marker = markersRef.current[point.id];
         if (marker) setTimeout(() => marker.openPopup(), 1000);
     };
 
+    // Auth Handlers
+    const handleLogin = () => {
+        localStorage.setItem("nongkhaem_auth", "true");
+        setIsAuthenticated(true);
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem("nongkhaem_auth");
+        setIsAuthenticated(false);
+    };
+
     // ---------------------------------------------------------------------------
     // RENDER
     // ---------------------------------------------------------------------------
+    if (!isAuthenticated) {
+        return <LoginScreen onLogin={handleLogin} />;
+    }
+
     return (
         <div className="app-container">
 
@@ -557,17 +647,19 @@ function App() {
                         <i className="fa-solid fa-file-import"></i>
                         <span className="icon-btn-tooltip">นำเข้า JSON</span>
                     </button>
-                    <button className="icon-btn danger" onClick={resetMockData} title="รีเซ็ตตัวอย่าง">
-                        <i className="fa-solid fa-rotate-left"></i>
-                        <span className="icon-btn-tooltip">รีเซ็ต</span>
-                    </button>
-                    <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".json" style={{ display: 'none' }} />
 
                     <div className="topbar-divider"></div>
 
                     <button className="theme-toggle-btn" onClick={() => setTheme(t => t === 'dark-theme' ? 'light-theme' : 'dark-theme')} title="เปลี่ยนธีม">
                         <i className={theme === 'dark-theme' ? 'fa-solid fa-moon' : 'fa-solid fa-sun'}></i>
                     </button>
+
+                    <button className="icon-btn danger" onClick={handleLogout} title="ออกจากระบบ" style={{ marginLeft: 4 }}>
+                        <i className="fa-solid fa-arrow-right-from-bracket"></i>
+                        <span className="icon-btn-tooltip">ออกจากระบบ</span>
+                    </button>
+
+                    <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".json" style={{ display: 'none' }} />
                 </div>
             </header>
 
