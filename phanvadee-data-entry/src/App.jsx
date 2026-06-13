@@ -3,17 +3,9 @@ import L from 'leaflet';
 import 'leaflet-routing-machine';
 
 // ---------------------------------------------------------------------------
-// MOCKUP DATA
+// CONSTANTS
 // ---------------------------------------------------------------------------
-const MOCKUP_DATA = [
-    { id: "mock-1", name: "สำนักงานเขตหนองแขม", status: "surveyed", lat: 13.705681, lng: 100.358245, notes: "สำนักงานหลัก ประสานงานลงพื้นที่สำรวจเขตหนองแขม ความเรียบร้อย 100%", date: "2026-06-01" },
-    { id: "mock-2", name: "วัดหนองแขม", status: "surveyed", lat: 13.693352, lng: 100.342123, notes: "จุดประสานงานชุมชนวัดหนองแขม ตรวจสอบทางเท้าและทางลาดผู้พิการเรียบร้อย", date: "2026-06-03" },
-    { id: "mock-3", name: "มหาวิทยาลัยเอเชียอาคเนย์", status: "surveyed", lat: 13.706121, lng: 100.362142, notes: "สำรวจจุดจอดรถและระบบกล้องวงจรปิดรอบมหาวิทยาลัย", date: "2026-06-05" },
-    { id: "mock-4", name: "ตลาดศูนย์การค้าหนองแขม", status: "pending", lat: 13.704251, lng: 100.347852, notes: "ยังไม่ได้ตรวจ: จุดร้องเรียนขยะอุดตันทางระบายน้ำและแผงลอยรุกล้ำทางเท้า", date: "2026-06-12" },
-    { id: "mock-5", name: "สวนพุทธมณฑลสาย 3 (ฝั่งใต้)", status: "pending", lat: 13.719852, lng: 100.367123, notes: "ยังไม่ได้ตรวจ: สำรวจพื้นที่สีเขียวแห่งใหม่ ความพร้อมไฟส่องสว่างตอนกลางคืน", date: "2026-06-10" },
-    { id: "mock-6", name: "สถานีตำรวจนครบาลหนองแขม", status: "pending", lat: 13.676512, lng: 100.349123, notes: "ยังไม่ได้ตรวจ: จุดเช็กระบบตู้ยามและพื้นที่ทางร่วมทางแยกอันตราย", date: "2026-06-11" }
-];
-
+const API_URL = 'http://localhost:3000/api';
 const NONG_KHAEM_CENTER = [13.7056, 100.3582];
 const TILE_URLS = {
     dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
@@ -25,17 +17,42 @@ const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">Op
 // LOGIN COMPONENT
 // ---------------------------------------------------------------------------
 function LoginScreen({ onLogin }) {
+    const [isRegisterMode, setIsRegisterMode] = useState(false);
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        // Mock authentication validation
-        if (username === 'admin' && password === 'admin123') {
-            onLogin();
-        } else {
-            setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+        setError('');
+        setLoading(true);
+
+        const endpoint = isRegisterMode ? `${API_URL}/register` : `${API_URL}/login`;
+        
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                if (isRegisterMode) {
+                    alert("สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ");
+                    setIsRegisterMode(false);
+                    setPassword('');
+                } else {
+                    onLogin(data.user);
+                }
+            } else {
+                setError(data.error || "เกิดข้อผิดพลาด");
+            }
+        } catch (err) {
+            setError("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้");
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -45,7 +62,7 @@ function LoginScreen({ onLogin }) {
                 <div className="login-logo">
                     <i className="fa-solid fa-map-location-dot"></i>
                 </div>
-                <h2>เข้าสู่ระบบ</h2>
+                <h2>{isRegisterMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}</h2>
                 <p>Nong Khaem Survey Map</p>
                 
                 {error && (
@@ -59,7 +76,7 @@ function LoginScreen({ onLogin }) {
                     <div className="form-group">
                         <input 
                             type="text" 
-                            placeholder="ชื่อผู้ใช้งาน (admin)" 
+                            placeholder="ชื่อผู้ใช้งาน" 
                             value={username}
                             onChange={(e) => { setUsername(e.target.value); setError(''); }}
                             required 
@@ -68,14 +85,27 @@ function LoginScreen({ onLogin }) {
                     <div className="form-group">
                         <input 
                             type="password" 
-                            placeholder="รหัสผ่าน (admin123)" 
+                            placeholder="รหัสผ่าน" 
                             value={password}
                             onChange={(e) => { setPassword(e.target.value); setError(''); }}
                             required 
                         />
                     </div>
-                    <button type="submit" className="login-btn">เข้าสู่ระบบ</button>
+                    <button type="submit" className="login-btn" disabled={loading}>
+                        {loading ? <i className="fa-solid fa-spinner fa-spin"></i> : (isRegisterMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ')}
+                    </button>
                 </form>
+                
+                <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text-secondary)' }}>
+                    {isRegisterMode ? 'มีบัญชีอยู่แล้ว?' : 'ยังไม่มีบัญชี?'} 
+                    <button 
+                        type="button" 
+                        onClick={() => { setIsRegisterMode(!isRegisterMode); setError(''); }}
+                        style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', marginLeft: 6, fontWeight: 600 }}
+                    >
+                        {isRegisterMode ? 'เข้าสู่ระบบเลย' : 'สมัครสมาชิก'}
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -86,14 +116,16 @@ function LoginScreen({ onLogin }) {
 // ---------------------------------------------------------------------------
 function App() {
     // --- Auth State ---
-    const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem("nongkhaem_auth") === "true");
+    const [authUser, setAuthUser] = useState(() => {
+        const saved = localStorage.getItem("nongkhaem_user");
+        if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+        return null;
+    });
+    const isAuthenticated = !!authUser;
 
     // --- Data State ---
-    const [surveyPoints, setSurveyPoints] = useState(() => {
-        const saved = localStorage.getItem("nongkhaem_survey_points");
-        if (saved) { try { return JSON.parse(saved); } catch (e) {} }
-        return MOCKUP_DATA;
-    });
+    const [surveyPoints, setSurveyPoints] = useState([]);
+    const [isDataLoaded, setIsDataLoaded] = useState(false);
 
     const [activeFilter, setActiveFilter] = useState('all');
     const [searchText, setSearchText] = useState('');
@@ -128,6 +160,25 @@ function App() {
     const searchRef = useRef(null);
 
     // --- Effects ---
+    
+    // Fetch Data from Backend
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        
+        const fetchLocations = async () => {
+            try {
+                const res = await fetch(`${API_URL}/locations`);
+                const data = await res.json();
+                setSurveyPoints(data);
+                setIsDataLoaded(true);
+            } catch (err) {
+                console.error("Error fetching locations:", err);
+            }
+        };
+        fetchLocations();
+    }, [isAuthenticated]);
+
+    // Theme Update
     useEffect(() => {
         document.body.className = theme;
         localStorage.setItem("survey_map_theme", theme);
@@ -142,8 +193,8 @@ function App() {
         }
     }, [theme]);
 
+    // Update Stats
     useEffect(() => {
-        localStorage.setItem("nongkhaem_survey_points", JSON.stringify(surveyPoints));
         const total = surveyPoints.length;
         const surveyed = surveyPoints.filter(p => p.status === 'surveyed').length;
         const pending = total - surveyed;
@@ -152,7 +203,7 @@ function App() {
         setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference });
     }, [surveyPoints]);
 
-    // Initialize Leaflet map (only when authenticated)
+    // Initialize Leaflet map
     useEffect(() => {
         if (!isAuthenticated) return;
 
@@ -194,11 +245,11 @@ function App() {
         }
 
         return () => { map.remove(); };
-    }, [isAuthenticated]); // Re-run if auth state changes
+    }, [isAuthenticated]);
 
-    // Render markers when data/filter changes
+    // Render markers
     useEffect(() => {
-        if (!mapRef.current || !isAuthenticated) return;
+        if (!mapRef.current || !isAuthenticated || !isDataLoaded) return;
         Object.values(markersRef.current).forEach(m => mapRef.current.removeLayer(m));
         markersRef.current = {};
 
@@ -262,7 +313,7 @@ function App() {
 
         mapRef.current.on('popupopen', onPopupOpen);
         return () => { if (mapRef.current) mapRef.current.off('popupopen', onPopupOpen); };
-    }, [surveyPoints, activeFilter, isAuthenticated]);
+    }, [surveyPoints, activeFilter, isAuthenticated, isDataLoaded]);
 
     // ---------------------------------------------------------------------------
     // NAVIGATION (OSRM)
@@ -333,7 +384,7 @@ function App() {
     };
 
     // ---------------------------------------------------------------------------
-    // CRUD
+    // CRUD (Connected to Backend)
     // ---------------------------------------------------------------------------
     const openSurveyForm = (id = null, lat = null, lng = null) => {
         if (id) {
@@ -345,21 +396,50 @@ function App() {
         }
     };
 
-    const handleFormSubmit = (e) => {
+    const handleFormSubmit = async (e) => {
         e.preventDefault();
         if (!formPoint.name.trim()) { alert("กรุณากรอกชื่อสถานที่สำรวจ"); return; }
-        if (formPoint.id) {
-            setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? { ...formPoint, name: formPoint.name.trim(), notes: formPoint.notes.trim() } : p));
-        } else {
-            setSurveyPoints(prev => [...prev, { ...formPoint, id: 'point-' + Date.now(), name: formPoint.name.trim(), notes: formPoint.notes.trim() }]);
+        
+        try {
+            if (formPoint.id) {
+                // Update
+                const payload = { ...formPoint, name: formPoint.name.trim(), notes: formPoint.notes.trim() };
+                const res = await fetch(`${API_URL}/locations/${formPoint.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
+            } else {
+                // Add
+                const newId = 'point-' + Date.now();
+                const payload = { ...formPoint, id: newId, name: formPoint.name.trim(), notes: formPoint.notes.trim() };
+                const res = await fetch(`${API_URL}/locations`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) setSurveyPoints(prev => [...prev, payload]);
+            }
+            setIsFormOpen(false);
+        } catch (err) {
+            alert("บันทึกข้อมูลล้มเหลว: " + err.message);
         }
-        setIsFormOpen(false);
     };
 
-    const deleteSurveyPoint = (id) => {
+    const deleteSurveyPoint = async (id) => {
         if (confirm("ต้องการลบจุดสำรวจนี้ใช่หรือไม่?")) {
-            setSurveyPoints(prev => prev.filter(p => p.id !== id));
-            cancelNavigation();
+            try {
+                const res = await fetch(`${API_URL}/locations/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    setSurveyPoints(prev => prev.filter(p => p.id !== id));
+                    cancelNavigation();
+                } else {
+                    alert("ลบข้อมูลไม่สำเร็จ");
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + err.message);
+            }
         }
     };
 
@@ -439,7 +519,7 @@ function App() {
     };
 
     // ---------------------------------------------------------------------------
-    // EXPORT / IMPORT
+    // EXPORT / IMPORT (Backend connected)
     // ---------------------------------------------------------------------------
     const exportData = () => {
         const blob = new Blob([JSON.stringify(surveyPoints, null, 4)], { type: "application/json" });
@@ -452,28 +532,27 @@ function App() {
     const handleImportFile = (e) => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
             try {
                 const parsed = JSON.parse(ev.target.result);
                 if (Array.isArray(parsed) && parsed.every(p => p.id && p.name && p.status && p.lat && p.lng)) {
-                    setSurveyPoints(parsed);
-                    alert(`นำเข้าสำเร็จ ${parsed.length} จุด!`);
+                    // Send to backend
+                    const res = await fetch(`${API_URL}/locations/import`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(parsed)
+                    });
+                    if (res.ok) {
+                        setSurveyPoints(parsed);
+                        alert(`นำเข้าสำเร็จ ${parsed.length} จุด ลงในฐานข้อมูล!`);
+                    } else {
+                        alert("การบันทึกลง Database ล้มเหลว");
+                    }
                 } else { alert("ไฟล์ JSON ผิดรูปแบบ"); }
             } catch (err) { alert("อ่านไฟล์ไม่ได้: " + err.message); }
         };
         reader.readAsText(file);
         e.target.value = '';
-    };
-
-    const resetMockData = () => {
-        if (confirm("รีเซ็ตข้อมูลกลับเป็นตัวอย่างเดิม 6 จุดหรือไม่?")) {
-            setSurveyPoints([...MOCKUP_DATA]);
-            cancelNavigation();
-            if (searchMarkerRef.current && mapRef.current) { 
-                mapRef.current.removeLayer(searchMarkerRef.current); 
-                searchMarkerRef.current = null; 
-            }
-        }
     };
 
     // Filter list
@@ -494,14 +573,14 @@ function App() {
     };
 
     // Auth Handlers
-    const handleLogin = () => {
-        localStorage.setItem("nongkhaem_auth", "true");
-        setIsAuthenticated(true);
+    const handleLogin = (user) => {
+        localStorage.setItem("nongkhaem_user", JSON.stringify(user));
+        setAuthUser(user);
     };
 
     const handleLogout = () => {
-        localStorage.removeItem("nongkhaem_auth");
-        setIsAuthenticated(false);
+        localStorage.removeItem("nongkhaem_user");
+        setAuthUser(null);
     };
 
     // ---------------------------------------------------------------------------
@@ -650,6 +729,10 @@ function App() {
 
                     <div className="topbar-divider"></div>
 
+                    <div style={{ fontSize: 12, marginRight: 8, color: 'var(--text-secondary)' }}>
+                        <i className="fa-solid fa-user-circle"></i> {authUser?.username}
+                    </div>
+
                     <button className="theme-toggle-btn" onClick={() => setTheme(t => t === 'dark-theme' ? 'light-theme' : 'dark-theme')} title="เปลี่ยนธีม">
                         <i className={theme === 'dark-theme' ? 'fa-solid fa-moon' : 'fa-solid fa-sun'}></i>
                     </button>
@@ -689,7 +772,12 @@ function App() {
                         </div>
 
                         <div className="locations-list">
-                            {listItems.length === 0 ? (
+                            {!isDataLoaded ? (
+                                <div className="empty-state">
+                                    <i className="fa-solid fa-spinner fa-spin"></i>
+                                    <p>กำลังโหลดข้อมูล...</p>
+                                </div>
+                            ) : listItems.length === 0 ? (
                                 <div className="empty-state">
                                     <i className="fa-solid fa-location-dot"></i>
                                     <p>{searchText ? 'ไม่พบข้อมูลที่ตรงกับการค้นหา' : 'ไม่มีจุดสำรวจในหมวดหมู่นี้'}</p>
