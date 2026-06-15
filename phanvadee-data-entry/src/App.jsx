@@ -139,6 +139,11 @@ function App() {
     // Form modal
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [formPoint, setFormPoint] = useState({ id: '', name: '', status: 'surveyed', lat: NONG_KHAEM_CENTER[0], lng: NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
+    const isFormOpenRef = useRef(isFormOpen);
+    
+    useEffect(() => {
+        isFormOpenRef.current = isFormOpen;
+    }, [isFormOpen]);
 
     // Navigation
     const [navActive, setNavActive] = useState(false);
@@ -227,8 +232,13 @@ function App() {
         }).addTo(map);
 
         map.on("click", (e) => {
-            setFormPoint({ id: '', name: '', status: 'surveyed', lat: e.latlng.lat, lng: e.latlng.lng, notes: '', date: new Date().toISOString().split('T')[0] });
-            setIsFormOpen(true);
+            if (isFormOpenRef.current) {
+                // Just update lat/lng if form is already open
+                setFormPoint(prev => ({ ...prev, lat: e.latlng.lat, lng: e.latlng.lng }));
+            } else {
+                setFormPoint({ id: '', name: '', status: 'surveyed', lat: e.latlng.lat, lng: e.latlng.lng, notes: '', date: new Date().toISOString().split('T')[0] });
+                setIsFormOpen(true);
+            }
         });
 
         if (navigator.geolocation) {
@@ -240,7 +250,12 @@ function App() {
                     html: `<div style="width:14px;height:14px;background:#3b82f6;border:2px solid white;border-radius:50%;box-shadow:0 0 10px rgba(59,130,246,0.8);"></div>`,
                     iconSize: [14, 14], iconAnchor: [7, 7]
                 });
-                L.marker(latlng, { icon: userIcon, zIndexOffset: 1000 }).addTo(map).bindPopup("ตำแหน่งปัจจุบัน");
+                const userMarker = L.marker(latlng, { icon: userIcon, zIndexOffset: 1000, draggable: true }).addTo(map).bindPopup("ตำแหน่งปัจจุบัน (ลากเพื่อเปลี่ยนจุดเริ่มต้น)");
+                
+                userMarker.on('dragend', (e) => {
+                    const newPos = e.target.getLatLng();
+                    userLocationRef.current = [newPos.lat, newPos.lng];
+                });
             }, () => {});
         }
 
@@ -267,9 +282,31 @@ function App() {
                 iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -32]
             });
 
-            const marker = L.marker([point.lat, point.lng], { icon });
+            const marker = L.marker([point.lat, point.lng], { icon, draggable: true });
             const statusLabel = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ';
             const badgeClass = point.status === 'surveyed' ? 'surveyed' : 'pending';
+
+            marker.on('dragend', async (e) => {
+                const newPos = e.target.getLatLng();
+                const payload = { ...point, lat: newPos.lat, lng: newPos.lng };
+                
+                try {
+                    const res = await fetch(`${API_URL}/locations/${point.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                        setSurveyPoints(prev => prev.map(p => p.id === point.id ? payload : p));
+                    } else {
+                        marker.setLatLng([point.lat, point.lng]);
+                        alert("อัปเดตตำแหน่งล้มเหลว");
+                    }
+                } catch (err) {
+                    marker.setLatLng([point.lat, point.lng]);
+                    console.error("Error updating marker position:", err);
+                }
+            });
 
             marker.bindPopup(`
                 <div class="popup-container">
