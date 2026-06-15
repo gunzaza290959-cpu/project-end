@@ -772,6 +772,7 @@ html, body, #root {
 .marker-pin {
     width: 30px;
     height: 30px;
+    box-sizing: border-box;
     border-radius: 50% 50% 50% 0;
     background: var(--primary);
     position: absolute;

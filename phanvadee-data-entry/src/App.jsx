@@ -445,6 +445,7 @@ function App() {
             router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
             routeWhileDragging: false,
             addWaypoints: false,
+            show: false,
             createMarker: () => null,
             lineOptions: {
                 styles: [
