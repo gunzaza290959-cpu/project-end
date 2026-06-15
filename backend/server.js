@@ -183,6 +183,51 @@ app.post('/api/locations/import', (req, res) => {
         });
     });
 });
+// Search Locations (Google Maps or Nominatim Fallback)
+app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.json([]);
+
+    const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
+
+    try {
+        if (googleApiKey) {
+            // Use Google Maps Places Text Search API
+            const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${googleApiKey}&language=th`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data.results) {
+                const mappedResults = data.results.slice(0, 5).map(item => ({
+                    display_name: item.formatted_address || item.name,
+                    name: item.name,
+                    lat: item.geometry.location.lat,
+                    lon: item.geometry.location.lng,
+                    source: 'google'
+                }));
+                return res.json(mappedResults);
+            }
+            return res.json([]);
+        } else {
+            // Fallback to Nominatim (OpenStreetMap)
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=th,en`;
+            // Add User-Agent as required by Nominatim policy
+            const response = await fetch(url, { headers: { 'User-Agent': 'NongKhaemSurveyApp/1.0' }});
+            const data = await response.json();
+            const mappedResults = data.map(item => ({
+                display_name: item.display_name,
+                name: item.display_name.split(',')[0],
+                lat: parseFloat(item.lat),
+                lon: parseFloat(item.lon),
+                source: 'osm'
+            }));
+            return res.json(mappedResults);
+        }
+    } catch (err) {
+        console.error("Search error:", err);
+        res.status(500).json({ error: "Failed to search locations" });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);

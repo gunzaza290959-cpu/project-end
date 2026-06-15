@@ -488,7 +488,9 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=Nong+Khaem+${encodeURIComponent(query)}&limit=4&accept-language=th,en`);
+            // Append area to query to prioritize local results
+            const searchQuery = query.includes('หนองแขม') ? query : `หนองแขม ${query}`;
+            const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchQuery)}`);
             setOnlineResults(await res.json());
         } catch { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
@@ -497,7 +499,7 @@ function App() {
     const handleSearchItemClick = (item) => {
         const lat = parseFloat(item.lat);
         const lng = parseFloat(item.lon);
-        const shortName = item.display_name.split(',')[0];
+        const shortName = item.name || item.display_name.split(',')[0];
 
         if (searchMarkerRef.current) mapRef.current.removeLayer(searchMarkerRef.current);
 
@@ -711,12 +713,15 @@ function App() {
                                     <i className="fa-solid fa-spinner fa-spin"></i>&nbsp; ค้นหา...
                                 </div>
                             ) : onlineResults.map((item, idx) => {
-                                const shortName = item.display_name.split(',')[0];
+                                const shortName = item.name || item.display_name.split(',')[0];
                                 return (
                                     <div key={idx} className="search-result-item" onClick={() => handleSearchItemClick(item)}>
                                         <i className="fa-solid fa-map-pin"></i>
                                         <div>
-                                            <div className="result-title">{shortName}</div>
+                                            <div className="result-title">
+                                                {shortName}
+                                                {item.source === 'google' && <span style={{ fontSize: 9, marginLeft: 6, background: '#ea4335', color: '#fff', padding: '2px 5px', borderRadius: 4 }}>Google Maps</span>}
+                                            </div>
                                             <div className="result-address">{item.display_name}</div>
                                         </div>
                                     </div>
