@@ -2,10 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'nongkhaem_secret_2026';
 
 app.use(cors());
 app.use(express.json());
@@ -68,6 +70,20 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
+// Middleware for JWT Verification
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
+    
+    if (!token) return res.status(401).json({ error: "Unauthorized: ไม่พบ Token ยืนยันตัวตน" });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: "Forbidden: Token หมดอายุหรือไม่ถูกต้อง" });
+        req.user = user;
+        next();
+    });
+}
+
 // ---------------------------------------------------------
 // AUTHENTICATION ROUTES
 // ---------------------------------------------------------
@@ -88,7 +104,7 @@ app.post('/api/register', async (req, res) => {
                 }
                 return res.status(500).json({ error: err.message });
             }
-            res.json({ success: true, message: "สมัครสมาชิกสำเร็จ!", userId: this.lastID });
+            res.json({ success: true, message: "สมัครสมาชิกสำเร็จ!" });
         });
     } catch (err) {
         res.status(500).json({ error: "เกิดข้อผิดพลาดบนเซิร์ฟเวอร์" });
@@ -107,9 +123,10 @@ app.post('/api/login', (req, res) => {
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) return res.status(400).json({ error: "รหัสผ่านไม่ถูกต้อง" });
 
-        // In a real app, you would issue a JWT token here.
-        // For simplicity, we just return success and user info.
-        res.json({ success: true, user: { id: user.id, username: user.username } });
+        // Generate JWT Token
+        const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+
+        res.json({ success: true, token, user: { id: user.id, username: user.username } });
     });
 });
 
@@ -117,7 +134,7 @@ app.post('/api/login', (req, res) => {
 // LOCATIONS ROUTES
 // ---------------------------------------------------------
 
-// Get all locations
+// Get all locations (Public or authenticated, leaving public so anyone can view the map, only admins can edit)
 app.get('/api/locations', (req, res) => {
     db.all(`SELECT * FROM locations`, [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -125,8 +142,8 @@ app.get('/api/locations', (req, res) => {
     });
 });
 
-// Add new location
-app.post('/api/locations', (req, res) => {
+// Add new location (Protected)
+app.post('/api/locations', authenticateToken, (req, res) => {
     const { id, name, status, lat, lng, notes, date } = req.body;
     db.run(`INSERT INTO locations (id, name, status, lat, lng, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [id, name, status, lat, lng, notes, date],
@@ -137,8 +154,8 @@ app.post('/api/locations', (req, res) => {
     );
 });
 
-// Update location
-app.put('/api/locations/:id', (req, res) => {
+// Update location (Protected)
+app.put('/api/locations/:id', authenticateToken, (req, res) => {
     const { name, status, lat, lng, notes, date } = req.body;
     const { id } = req.params;
     
@@ -151,8 +168,8 @@ app.put('/api/locations/:id', (req, res) => {
     );
 });
 
-// Delete location
-app.delete('/api/locations/:id', (req, res) => {
+// Delete location (Protected)
+app.delete('/api/locations/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     db.run(`DELETE FROM locations WHERE id = ?`, id, function(err) {
         if (err) return res.status(500).json({ error: err.message });
@@ -160,8 +177,8 @@ app.delete('/api/locations/:id', (req, res) => {
     });
 });
 
-// Import multiple locations
-app.post('/api/locations/import', (req, res) => {
+// Import multiple locations (Protected)
+app.post('/api/locations/import', authenticateToken, (req, res) => {
     const locations = req.body;
     if (!Array.isArray(locations)) return res.status(400).json({ error: "Invalid data format" });
 
@@ -183,6 +200,7 @@ app.post('/api/locations/import', (req, res) => {
         });
     });
 });
+
 // Search Locations (Google Maps or Nominatim Fallback)
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
@@ -192,7 +210,6 @@ app.get('/api/search', async (req, res) => {
 
     try {
         if (googleApiKey) {
-            // Use Google Maps Places Text Search API
             const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${googleApiKey}&language=th`;
             const response = await fetch(url);
             const data = await response.json();
@@ -209,9 +226,7 @@ app.get('/api/search', async (req, res) => {
             }
             return res.json([]);
         } else {
-            // Fallback to Nominatim (OpenStreetMap)
             const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=th,en`;
-            // Add User-Agent as required by Nominatim policy
             const response = await fetch(url, { headers: { 'User-Agent': 'NongKhaemSurveyApp/1.0' }});
             const data = await response.json();
             const mappedResults = data.map(item => ({

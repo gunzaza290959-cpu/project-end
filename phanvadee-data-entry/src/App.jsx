@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet-routing-machine';
+import Swal from 'sweetalert2';
 
 // ---------------------------------------------------------------------------
 // CONSTANTS
 // ---------------------------------------------------------------------------
-const API_URL = 'http://localhost:3000/api';
+const API_URL = '/api';
 const NONG_KHAEM_CENTER = [13.7056, 100.3582];
 const TILE_URLS = {
     dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
@@ -40,11 +41,18 @@ function LoginScreen({ onLogin }) {
             
             if (data.success) {
                 if (isRegisterMode) {
-                    alert("สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ");
+                    Swal.fire({
+                        title: 'สำเร็จ!',
+                        text: 'สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ',
+                        icon: 'success',
+                        background: 'var(--card-bg)',
+                        color: 'var(--text-primary)',
+                        confirmButtonColor: '#3b82f6'
+                    });
                     setIsRegisterMode(false);
                     setPassword('');
                 } else {
-                    onLogin(data.user);
+                    onLogin(data.user, data.token);
                 }
             } else {
                 setError(data.error || "เกิดข้อผิดพลาด");
@@ -116,12 +124,27 @@ function LoginScreen({ onLogin }) {
 // ---------------------------------------------------------------------------
 function App() {
     // --- Auth State ---
+    const [authToken, setAuthToken] = useState(() => localStorage.getItem("nongkhaem_token") || null);
     const [authUser, setAuthUser] = useState(() => {
         const saved = localStorage.getItem("nongkhaem_user");
         if (saved) { try { return JSON.parse(saved); } catch (e) {} }
         return null;
     });
-    const isAuthenticated = !!authUser;
+    const isAuthenticated = !!authUser && !!authToken;
+
+    const handleLogin = (user, token) => {
+        localStorage.setItem("nongkhaem_user", JSON.stringify(user));
+        localStorage.setItem("nongkhaem_token", token);
+        setAuthUser(user);
+        setAuthToken(token);
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem("nongkhaem_user");
+        localStorage.removeItem("nongkhaem_token");
+        setAuthUser(null);
+        setAuthToken(null);
+    };
 
     // --- Data State ---
     const [surveyPoints, setSurveyPoints] = useState([]);
@@ -172,7 +195,13 @@ function App() {
         
         const fetchLocations = async () => {
             try {
-                const res = await fetch(`${API_URL}/locations`);
+                const res = await fetch(`${API_URL}/locations`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                if (res.status === 401 || res.status === 403) {
+                    Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                    return handleLogout();
+                }
                 const data = await res.json();
                 setSurveyPoints(data);
                 setIsDataLoaded(true);
@@ -181,7 +210,7 @@ function App() {
             }
         };
         fetchLocations();
-    }, [isAuthenticated]);
+    }, [isAuthenticated, authToken]);
 
     // Theme Update
     useEffect(() => {
@@ -293,14 +322,23 @@ function App() {
                 try {
                     const res = await fetch(`${API_URL}/locations/${point.id}`, {
                         method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken}`
+                        },
                         body: JSON.stringify(payload)
                     });
+                    
+                    if (res.status === 401 || res.status === 403) {
+                        Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                        return handleLogout();
+                    }
+
                     if (res.ok) {
                         setSurveyPoints(prev => prev.map(p => p.id === point.id ? payload : p));
                     } else {
                         marker.setLatLng([point.lat, point.lng]);
-                        alert("อัปเดตตำแหน่งล้มเหลว");
+                        Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'อัปเดตตำแหน่งล้มเหลว', background: 'var(--card-bg)', color: 'var(--text-primary)' });
                     }
                 } catch (err) {
                     marker.setLatLng([point.lat, point.lng]);
@@ -435,47 +473,84 @@ function App() {
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
-        if (!formPoint.name.trim()) { alert("กรุณากรอกชื่อสถานที่สำรวจ"); return; }
+        if (!formPoint.name.trim()) { 
+            Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'กรุณากรอกชื่อสถานที่สำรวจ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            return; 
+        }
         
         try {
-            if (formPoint.id) {
-                // Update
-                const payload = { ...formPoint, name: formPoint.name.trim(), notes: formPoint.notes.trim() };
-                const res = await fetch(`${API_URL}/locations/${formPoint.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (res.ok) setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
-            } else {
-                // Add
-                const newId = 'point-' + Date.now();
-                const payload = { ...formPoint, id: newId, name: formPoint.name.trim(), notes: formPoint.notes.trim() };
-                const res = await fetch(`${API_URL}/locations`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (res.ok) setSurveyPoints(prev => [...prev, payload]);
+            const isUpdate = !!formPoint.id;
+            const method = isUpdate ? 'PUT' : 'POST';
+            const endpoint = isUpdate ? `${API_URL}/locations/${formPoint.id}` : `${API_URL}/locations`;
+            
+            const payloadId = isUpdate ? formPoint.id : 'point-' + Date.now();
+            const payload = { ...formPoint, id: payloadId, name: formPoint.name.trim(), notes: formPoint.notes.trim() };
+
+            const res = await fetch(endpoint, {
+                method,
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.status === 401 || res.status === 403) {
+                Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                return handleLogout();
             }
-            setIsFormOpen(false);
+
+            if (res.ok) {
+                if (isUpdate) {
+                    setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
+                } else {
+                    setSurveyPoints(prev => [...prev, payload]);
+                }
+                Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'บันทึกข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                setIsFormOpen(false);
+            } else {
+                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'บันทึกข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            }
         } catch (err) {
-            alert("บันทึกข้อมูลล้มเหลว: " + err.message);
+            Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `บันทึกข้อมูลล้มเหลว: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
         }
     };
 
     const deleteSurveyPoint = async (id) => {
-        if (confirm("ต้องการลบจุดสำรวจนี้ใช่หรือไม่?")) {
+        const result = await Swal.fire({
+            title: 'ยืนยันการลบ?',
+            text: "ต้องการลบจุดสำรวจนี้ใช่หรือไม่?",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#6b7280',
+            confirmButtonText: 'ใช่, ลบเลย!',
+            cancelButtonText: 'ยกเลิก',
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+        
+        if (result.isConfirmed) {
             try {
-                const res = await fetch(`${API_URL}/locations/${id}`, { method: 'DELETE' });
+                const res = await fetch(`${API_URL}/locations/${id}`, { 
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (res.status === 401 || res.status === 403) {
+                    Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                    return handleLogout();
+                }
+
                 if (res.ok) {
                     setSurveyPoints(prev => prev.filter(p => p.id !== id));
                     cancelNavigation();
+                    Swal.fire({ icon: 'success', title: 'ลบสำเร็จ', showConfirmButton: false, timer: 1500, background: 'var(--card-bg)', color: 'var(--text-primary)' });
                 } else {
-                    alert("ลบข้อมูลไม่สำเร็จ");
+                    Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'ลบข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + err.message);
+                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
             }
         }
     };
@@ -578,17 +653,26 @@ function App() {
                     // Send to backend
                     const res = await fetch(`${API_URL}/locations/import`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken}`
+                        },
                         body: JSON.stringify(parsed)
                     });
+                    
+                    if (res.status === 401 || res.status === 403) {
+                        Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                        return handleLogout();
+                    }
+
                     if (res.ok) {
                         setSurveyPoints(parsed);
-                        alert(`นำเข้าสำเร็จ ${parsed.length} จุด ลงในฐานข้อมูล!`);
+                        Swal.fire({ icon: 'success', title: 'สำเร็จ', text: `นำเข้าข้อมูล ${parsed.length} จุด ลงในฐานข้อมูล!`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
                     } else {
-                        alert("การบันทึกลง Database ล้มเหลว");
+                        Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: "การบันทึกลง Database ล้มเหลว", background: 'var(--card-bg)', color: 'var(--text-primary)' });
                     }
-                } else { alert("ไฟล์ JSON ผิดรูปแบบ"); }
-            } catch (err) { alert("อ่านไฟล์ไม่ได้: " + err.message); }
+                } else { Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'ไฟล์ JSON ผิดรูปแบบ', background: 'var(--card-bg)', color: 'var(--text-primary)' }); }
+            } catch (err) { Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: "อ่านไฟล์ไม่ได้: " + err.message, background: 'var(--card-bg)', color: 'var(--text-primary)' }); }
         };
         reader.readAsText(file);
         e.target.value = '';
