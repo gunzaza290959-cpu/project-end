@@ -210,17 +210,17 @@ app.get('/api/search', async (req, res) => {
 
     try {
         if (googleApiKey) {
-            const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${googleApiKey}&language=th`;
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${googleApiKey}&language=th`;
             const response = await fetch(url);
             const data = await response.json();
             
             if (data.results) {
                 const mappedResults = data.results.slice(0, 5).map(item => ({
-                    display_name: item.formatted_address || item.name,
-                    name: item.name,
+                    display_name: item.formatted_address,
+                    name: item.formatted_address.split(' ')[0], // usually the house number or first part
                     lat: item.geometry.location.lat,
                     lon: item.geometry.location.lng,
-                    source: 'google'
+                    source: 'google-geocode'
                 }));
                 return res.json(mappedResults);
             }
