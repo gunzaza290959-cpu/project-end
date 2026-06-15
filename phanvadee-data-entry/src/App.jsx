@@ -598,11 +598,7 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            let searchQuery = query;
-            if (!query.includes('หนองแขม') && !query.includes('หนองค้างพลู') && !query.includes('กรุงเทพ')) {
-                searchQuery = `${query} หนองแขม กรุงเทพ`;
-            }
-            const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchQuery)}`);
+            const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(query)}`);
             setOnlineResults(await res.json());
         } catch { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
@@ -820,7 +816,7 @@ function App() {
                             value={searchText}
                             onChange={e => setSearchText(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && searchOnline()}
-                            placeholder="ค้นหา: เขตหนองแขม, แขวงหนองค้างพลู (10160)..."
+                            placeholder="ค้นหาสถานที่ทั่วประเทศ..."
                         />
                         {searchText && (
                             <button className="clear-btn" onClick={clearSearch}>
