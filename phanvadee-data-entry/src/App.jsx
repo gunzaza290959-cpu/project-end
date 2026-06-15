@@ -260,13 +260,42 @@ function App() {
             interactive: false
         }).addTo(map);
 
-        map.on("click", (e) => {
+        map.on("click", async (e) => {
+            const lat = e.latlng.lat;
+            const lng = e.latlng.lng;
+
             if (isFormOpenRef.current) {
                 // Just update lat/lng if form is already open
-                setFormPoint(prev => ({ ...prev, lat: e.latlng.lat, lng: e.latlng.lng }));
+                setFormPoint(prev => ({ ...prev, lat, lng }));
             } else {
-                setFormPoint({ id: '', name: '', status: 'surveyed', lat: e.latlng.lat, lng: e.latlng.lng, notes: '', date: new Date().toISOString().split('T')[0] });
+                setFormPoint({ id: '', name: 'กำลังค้นหาที่อยู่...', status: 'surveyed', lat, lng, notes: '', date: new Date().toISOString().split('T')[0] });
                 setIsFormOpen(true);
+            }
+
+            // Reverse Geocoding
+            try {
+                const res = await fetch(`${API_URL}/geocode?lat=${lat}&lng=${lng}`);
+                const data = await res.json();
+                
+                if (data.address && data.address !== 'ไม่พบที่อยู่') {
+                    setFormPoint(prev => {
+                        // Only auto-fill if the name is empty or still loading
+                        if (prev.name === 'กำลังค้นหาที่อยู่...' || !prev.name) {
+                            return { ...prev, name: data.address };
+                        }
+                        // If name is already filled, append to notes if not already there
+                        if (!prev.notes.includes(data.address)) {
+                            const newNotes = prev.notes ? prev.notes + '\nที่อยู่: ' + data.address : 'ที่อยู่: ' + data.address;
+                            return { ...prev, notes: newNotes };
+                        }
+                        return prev;
+                    });
+                } else {
+                    setFormPoint(prev => prev.name === 'กำลังค้นหาที่อยู่...' ? { ...prev, name: '' } : prev);
+                }
+            } catch (err) {
+                setFormPoint(prev => prev.name === 'กำลังค้นหาที่อยู่...' ? { ...prev, name: '' } : prev);
+                console.error("Geocode fetch error:", err);
             }
         });
 

@@ -244,6 +244,40 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
+// Reverse Geocoding (Google Maps or Nominatim Fallback)
+app.get('/api/geocode', async (req, res) => {
+    const { lat, lng } = req.query;
+    if (!lat || !lng) return res.status(400).json({ error: "Missing lat/lng" });
+
+    const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
+
+    try {
+        if (googleApiKey) {
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${googleApiKey}&language=th`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data.results && data.results.length > 0) {
+                // Get the most specific address (usually the first one)
+                return res.json({ address: data.results[0].formatted_address, source: 'google' });
+            }
+            return res.json({ address: "ไม่พบที่อยู่", source: 'google' });
+        } else {
+            const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=th,en`;
+            const response = await fetch(url, { headers: { 'User-Agent': 'NongKhaemSurveyApp/1.0' }});
+            const data = await response.json();
+            
+            if (data && data.display_name) {
+                return res.json({ address: data.display_name, source: 'osm' });
+            }
+            return res.json({ address: "ไม่พบที่อยู่", source: 'osm' });
+        }
+    } catch (err) {
+        console.error("Geocode error:", err);
+        res.status(500).json({ error: "Failed to geocode location" });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
