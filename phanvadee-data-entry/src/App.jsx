@@ -342,7 +342,7 @@ function App() {
             const icon = L.divIcon({
                 className: 'custom-map-marker',
                 html: `<div class="marker-pin ${sc}">${iconHtml}</div>`,
-                iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -32]
+                iconSize: [30, 42], iconAnchor: [15, 42], popupAnchor: [0, -42]
             });
 
             const marker = L.marker([point.lat, point.lng], { icon, draggable: true });
@@ -615,7 +615,7 @@ function App() {
         const icon = L.divIcon({
             className: 'custom-map-marker',
             html: `<div class="marker-pin" style="background:#3b82f6;"><i class="fa-solid fa-star"></i></div>`,
-            iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -32]
+            iconSize: [30, 42], iconAnchor: [15, 42], popupAnchor: [0, -42]
         });
 
         const marker = L.marker([lat, lng], { icon }).addTo(mapRef.current);

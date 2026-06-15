@@ -767,7 +767,7 @@ html, body, #root {
 .leaflet-container { font-family: var(--font-thai); }
 
 /* Markers */
-.custom-map-marker { display: flex; align-items: center; justify-content: center; }
+.custom-map-marker { position: relative; }
 
 .marker-pin {
     width: 30px;
@@ -776,8 +776,8 @@ html, body, #root {
     background: var(--primary);
     position: absolute;
     transform: rotate(-45deg);
-    left: 50%; top: 50%;
-    margin: -15px 0 0 -15px;
+    left: 50%; top: 6px;
+    margin-left: -15px;
     display: flex;
     align-items: center;
     justify-content: center;
