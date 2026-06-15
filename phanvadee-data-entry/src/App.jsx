@@ -1026,17 +1026,6 @@ function App() {
                                 <i className="fa-solid fa-xmark"></i>
                             </button>
                         </div>
-                        <div className="nav-instructions">
-                            {routeInstructions.map((step, idx) => (
-                                <div key={idx} className="nav-instruction-item">
-                                    <div className="icon"><i className={step.icon}></i></div>
-                                    <div className="text">
-                                        <div>{step.text}</div>
-                                        <div className="distance">{step.dist}</div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
                     </div>
                 )}
 
