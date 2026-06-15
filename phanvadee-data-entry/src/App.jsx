@@ -10,10 +10,10 @@ const API_URL = '/api';
 const NONG_KHAEM_CENTER = [13.7056, 100.3582];
 const TILE_URLS = {
     dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    light: "http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}",
+    satellite: "http://mt0.google.com/vt/lyrs=y&hl=th&x={x}&y={y}&z={z}"
 };
-const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const ATTRIBUTION = '&copy; <a href="https://maps.google.com">Google Maps</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 // ---------------------------------------------------------------------------
 // LOGIN COMPONENT
