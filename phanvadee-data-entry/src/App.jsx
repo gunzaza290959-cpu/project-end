@@ -598,22 +598,11 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(query)}&f=json&maxLocations=5`);
-            const data = await res.json();
-            
-            if (data.candidates && data.candidates.length > 0) {
-                const mappedResults = data.candidates.map(item => ({
-                    display_name: item.address,
-                    name: item.address.split(' ')[0] || item.address,
-                    lat: item.location.y,
-                    lon: item.location.x,
-                    source: 'arcgis'
-                }));
-                setOnlineResults(mappedResults);
-            } else {
-                setOnlineResults([]);
-            }
-        } catch (err) { setOnlineResults([]); }
+            // Append area to query to prioritize local results
+            const searchQuery = query.includes('หนองแขม') ? query : `หนองแขม ${query}`;
+            const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchQuery)}`);
+            setOnlineResults(await res.json());
+        } catch { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
     };
 
@@ -829,7 +818,7 @@ function App() {
                             value={searchText}
                             onChange={e => setSearchText(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && searchOnline()}
-                            placeholder="ค้นหาสถานที่ทั่วประเทศ..."
+                            placeholder="ค้นหาสถานที่ในหนองแขม..."
                         />
                         {searchText && (
                             <button className="clear-btn" onClick={clearSearch}>
@@ -857,7 +846,6 @@ function App() {
                                             <div className="result-title">
                                                 {shortName}
                                                 {item.source === 'google' && <span style={{ fontSize: 9, marginLeft: 6, background: '#ea4335', color: '#fff', padding: '2px 5px', borderRadius: 4 }}>Google Maps</span>}
-                                                {item.source === 'arcgis' && <span style={{ fontSize: 9, marginLeft: 6, background: '#007ac2', color: '#fff', padding: '2px 5px', borderRadius: 4 }}>ArcGIS (Global)</span>}
                                             </div>
                                             <div className="result-address">{item.display_name}</div>
                                         </div>
