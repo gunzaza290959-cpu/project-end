@@ -695,16 +695,6 @@ function App() {
         if (marker) setTimeout(() => marker.openPopup(), 1000);
     };
 
-    // Auth Handlers
-    const handleLogin = (user) => {
-        localStorage.setItem("nongkhaem_user", JSON.stringify(user));
-        setAuthUser(user);
-    };
-
-    const handleLogout = () => {
-        localStorage.removeItem("nongkhaem_user");
-        setAuthUser(null);
-    };
 
     // ---------------------------------------------------------------------------
     // RENDER
