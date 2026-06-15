@@ -598,9 +598,11 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(query)}`);
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=th,en`, {
+                headers: { 'Accept-Language': 'th,en' }
+            });
             setOnlineResults(await res.json());
-        } catch { setOnlineResults([]); }
+        } catch (err) { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
     };
 
