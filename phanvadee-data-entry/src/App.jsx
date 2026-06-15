@@ -10,7 +10,8 @@ const API_URL = '/api';
 const NONG_KHAEM_CENTER = [13.7056, 100.3582];
 const TILE_URLS = {
     dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+    light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 };
 const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
@@ -155,6 +156,7 @@ function App() {
     const [onlineResults, setOnlineResults] = useState([]);
     const [isSearchingOnline, setIsSearchingOnline] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem("survey_map_theme") || "dark-theme");
+    const [isSatellite, setIsSatellite] = useState(false);
 
     // Floating list panel open/close
     const [listOpen, setListOpen] = useState(true);
@@ -212,12 +214,15 @@ function App() {
         fetchLocations();
     }, [isAuthenticated, authToken]);
 
-    // Theme Update
+    // Theme & Map Layer Update
     useEffect(() => {
         document.body.className = theme;
         localStorage.setItem("survey_map_theme", theme);
         if (tileLayerRef.current) {
-            tileLayerRef.current.setUrl(theme === 'dark-theme' ? TILE_URLS.dark : TILE_URLS.light);
+            const tileUrl = isSatellite 
+                ? TILE_URLS.satellite 
+                : (theme === 'dark-theme' ? TILE_URLS.dark : TILE_URLS.light);
+            tileLayerRef.current.setUrl(tileUrl);
         }
         if (boundaryCircleRef.current) {
             boundaryCircleRef.current.setStyle({
@@ -225,7 +230,7 @@ function App() {
                 fillColor: theme === 'dark-theme' ? '#6366f1' : '#3b82f6'
             });
         }
-    }, [theme]);
+    }, [theme, isSatellite]);
 
     // Update Stats
     useEffect(() => {
@@ -665,10 +670,22 @@ function App() {
     // EXPORT / IMPORT (Backend connected)
     // ---------------------------------------------------------------------------
     const exportData = () => {
-        const blob = new Blob([JSON.stringify(surveyPoints, null, 4)], { type: "application/json" });
+        const headers = ["ID", "ชื่อสถานที่/บ้านเลขที่", "สถานะ", "ละติจูด", "ลองจิจูด", "บันทึกเพิ่มเติม", "วันที่"];
+        const rows = surveyPoints.map(p => [
+            p.id,
+            `"${(p.name || '').replace(/"/g, '""')}"`,
+            p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ',
+            p.lat,
+            p.lng,
+            `"${(p.notes || '').replace(/"/g, '""')}"`,
+            p.date
+        ]);
+        // \uFEFF for Excel UTF-8 BOM
+        const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.json`;
+        a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.csv`;
         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
     };
 
@@ -707,7 +724,7 @@ function App() {
         e.target.value = '';
     };
 
-    // Filter list
+    // Filter and sort list (pending first)
     const listItems = surveyPoints.filter(p => {
         if (activeFilter !== 'all' && p.status !== activeFilter) return false;
         if (searchText.trim()) {
@@ -715,6 +732,10 @@ function App() {
             return p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q));
         }
         return true;
+    }).sort((a, b) => {
+        if (a.status === 'pending' && b.status === 'surveyed') return -1;
+        if (a.status === 'surveyed' && b.status === 'pending') return 1;
+        return 0;
     });
 
     const handleListItemClick = (point) => {
@@ -863,9 +884,9 @@ function App() {
                         <i className="fa-solid fa-list-ul"></i>
                         <span className="icon-btn-tooltip">รายการ</span>
                     </button>
-                    <button className="icon-btn" onClick={exportData} title="ส่งออก JSON">
+                    <button className="icon-btn" onClick={exportData} title="ส่งออก CSV">
                         <i className="fa-solid fa-file-export"></i>
-                        <span className="icon-btn-tooltip">ส่งออก JSON</span>
+                        <span className="icon-btn-tooltip">ส่งออก CSV</span>
                     </button>
                     <button className="icon-btn" onClick={() => fileInputRef.current.click()} title="นำเข้า JSON">
                         <i className="fa-solid fa-file-import"></i>
@@ -894,6 +915,30 @@ function App() {
             {/* ===== MAP ===== */}
             <main className="map-container-wrapper">
                 <div id="map" className="map-view"></div>
+
+                {/* Floating Map Controls */}
+                <div className="map-floating-controls">
+                    <button 
+                        className={`map-ctrl-btn ${isSatellite ? 'active' : ''}`} 
+                        onClick={() => setIsSatellite(!isSatellite)}
+                        title="โหมดดาวเทียม"
+                    >
+                        <i className="fa-solid fa-satellite"></i>
+                    </button>
+                    <button 
+                        className="map-ctrl-btn" 
+                        onClick={() => {
+                            if (userLocationRef.current && mapRef.current) {
+                                mapRef.current.flyTo(userLocationRef.current, 18, { duration: 1.5 });
+                            } else {
+                                Swal.fire({ icon: 'info', title: 'ไม่พบตำแหน่ง', text: 'กำลังรอรับข้อมูล GPS ของคุณ หรือเบราว์เซอร์ไม่รองรับ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                            }
+                        }}
+                        title="ตำแหน่งของฉัน"
+                    >
+                        <i className="fa-solid fa-location-crosshairs"></i>
+                    </button>
+                </div>
 
                 {/* Floating location list panel */}
                 {listOpen ? (
