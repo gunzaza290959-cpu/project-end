@@ -598,10 +598,21 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=th,en`, {
-                headers: { 'Accept-Language': 'th,en' }
-            });
-            setOnlineResults(await res.json());
+            const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(query)}&f=json&maxLocations=5`);
+            const data = await res.json();
+            
+            if (data.candidates && data.candidates.length > 0) {
+                const mappedResults = data.candidates.map(item => ({
+                    display_name: item.address,
+                    name: item.address.split(' ')[0] || item.address,
+                    lat: item.location.y,
+                    lon: item.location.x,
+                    source: 'arcgis'
+                }));
+                setOnlineResults(mappedResults);
+            } else {
+                setOnlineResults([]);
+            }
         } catch (err) { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
     };
@@ -846,6 +857,7 @@ function App() {
                                             <div className="result-title">
                                                 {shortName}
                                                 {item.source === 'google' && <span style={{ fontSize: 9, marginLeft: 6, background: '#ea4335', color: '#fff', padding: '2px 5px', borderRadius: 4 }}>Google Maps</span>}
+                                                {item.source === 'arcgis' && <span style={{ fontSize: 9, marginLeft: 6, background: '#007ac2', color: '#fff', padding: '2px 5px', borderRadius: 4 }}>ArcGIS (Global)</span>}
                                             </div>
                                             <div className="result-address">{item.display_name}</div>
                                         </div>
