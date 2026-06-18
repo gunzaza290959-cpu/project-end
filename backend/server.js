@@ -4,13 +4,43 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 
 const app = express();
+const http = require('http');
+const { Server } = require('socket.io');
+
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*", // allow frontend origins
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'nongkhaem_secret_2026';
 
 app.use(cors());
 app.use(express.json());
+
+// Ensure uploads dir exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+
+// Serve static uploaded files
+app.use('/uploads', express.static(uploadsDir));
+
+// Configure multer
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadsDir),
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage });
 
 // Initialize SQLite database
 const dbPath = path.join(__dirname, 'database.sqlite');
@@ -43,8 +73,13 @@ const db = new sqlite3.Database(dbPath, (err) => {
             lat REAL,
             lng REAL,
             notes TEXT,
-            date TEXT
+            date TEXT,
+            imageUrl TEXT
         )`, (err) => {
+            if (!err) {
+                // Migration: Add imageUrl to existing table if not exists
+                db.run(`ALTER TABLE locations ADD COLUMN imageUrl TEXT`, () => {});
+            }
             if (err) console.error("Error creating locations table:", err);
             else {
                 // Insert mock data if empty
@@ -144,11 +179,13 @@ app.get('/api/locations', (req, res) => {
 
 // Add new location (Protected)
 app.post('/api/locations', authenticateToken, (req, res) => {
-    const { id, name, status, lat, lng, notes, date } = req.body;
-    db.run(`INSERT INTO locations (id, name, status, lat, lng, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, name, status, lat, lng, notes, date],
+    const { id, name, status, lat, lng, notes, date, imageUrl } = req.body;
+    db.run(`INSERT INTO locations (id, name, status, lat, lng, notes, date, imageUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, name, status, lat, lng, notes, date, imageUrl],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
+            const newLoc = { id, name, status, lat, lng, notes, date, imageUrl };
+            io.emit('locationAdded', newLoc);
             res.json({ success: true, message: "เพิ่มข้อมูลสำเร็จ" });
         }
     );
@@ -156,16 +193,25 @@ app.post('/api/locations', authenticateToken, (req, res) => {
 
 // Update location (Protected)
 app.put('/api/locations/:id', authenticateToken, (req, res) => {
-    const { name, status, lat, lng, notes, date } = req.body;
+    const { name, status, lat, lng, notes, date, imageUrl } = req.body;
     const { id } = req.params;
     
-    db.run(`UPDATE locations SET name = ?, status = ?, lat = ?, lng = ?, notes = ?, date = ? WHERE id = ?`,
-        [name, status, lat, lng, notes, date, id],
+    db.run(`UPDATE locations SET name = ?, status = ?, lat = ?, lng = ?, notes = ?, date = ?, imageUrl = ? WHERE id = ?`,
+        [name, status, lat, lng, notes, date, imageUrl, id],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
+            const updatedLoc = { id, name, status, lat, lng, notes, date, imageUrl };
+            io.emit('locationUpdated', updatedLoc);
             res.json({ success: true, message: "อัปเดตข้อมูลสำเร็จ" });
         }
     );
+});
+
+// Upload image (Protected)
+app.post('/api/upload', authenticateToken, upload.single('photo'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const imageUrl = `/uploads/${req.file.filename}`;
+    res.json({ success: true, imageUrl });
 });
 
 // Delete location (Protected)
@@ -173,6 +219,7 @@ app.delete('/api/locations/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     db.run(`DELETE FROM locations WHERE id = ?`, id, function(err) {
         if (err) return res.status(500).json({ error: err.message });
+        io.emit('locationDeleted', id);
         res.json({ success: true, message: "ลบข้อมูลสำเร็จ" });
     });
 });
@@ -278,6 +325,6 @@ app.get('/api/geocode', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+server.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT} with WebSocket`);
 });

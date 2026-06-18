@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet-routing-machine';
 import Swal from 'sweetalert2';
+import { io } from 'socket.io-client';
 
 // ---------------------------------------------------------------------------
 // CONSTANTS
@@ -115,6 +119,9 @@ function LoginScreen({ onLogin }) {
                         {isRegisterMode ? 'เข้าสู่ระบบเลย' : 'สมัครสมาชิก'}
                     </button>
                 </div>
+                <button className="btn" onClick={() => onLogin(null, null, true)} style={{ marginTop: 12, width: '100%', background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                    ปิด (ดูแผนที่แบบผู้เยี่ยมชม)
+                </button>
             </div>
         </div>
     );
@@ -133,11 +140,16 @@ function App() {
     });
     const isAuthenticated = !!authUser && !!authToken;
 
-    const handleLogin = (user, token) => {
+    const handleLogin = (user, token, closeOnly = false) => {
+        if (closeOnly) {
+            setShowLoginModal(false);
+            return;
+        }
         localStorage.setItem("nongkhaem_user", JSON.stringify(user));
         localStorage.setItem("nongkhaem_token", token);
         setAuthUser(user);
         setAuthToken(token);
+        setShowLoginModal(false);
     };
 
     const handleLogout = () => {
@@ -145,7 +157,10 @@ function App() {
         localStorage.removeItem("nongkhaem_token");
         setAuthUser(null);
         setAuthToken(null);
+        Swal.fire({ icon: 'success', title: 'ออกจากระบบแล้ว', timer: 1500, showConfirmButton: false });
     };
+
+    const [showLoginModal, setShowLoginModal] = useState(false);
 
     // --- Data State ---
     const [surveyPoints, setSurveyPoints] = useState([]);
@@ -163,7 +178,17 @@ function App() {
 
     // Form modal
     const [isFormOpen, setIsFormOpen] = useState(false);
-    const [formPoint, setFormPoint] = useState({ id: '', name: '', status: 'surveyed', lat: NONG_KHAEM_CENTER[0], lng: NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
+    const [formPoint, setFormPoint] = useState({ id: null, name: '', status: 'pending', lat: null, lng: null, notes: '', date: '', imageUrl: null });
+    
+    // Pro Features States
+    const [selectedPhoto, setSelectedPhoto] = useState(null);
+    const [photoPreview, setPhotoPreview] = useState(null);
+    const [isDashboardOpen, setIsDashboardOpen] = useState(false);
+    
+    // Enterprise Features States
+    const [weather, setWeather] = useState(null);
+    const [isHeatmapMode, setIsHeatmapMode] = useState(false);
+
     const isFormOpenRef = useRef(isFormOpen);
     
     useEffect(() => {
@@ -183,23 +208,69 @@ function App() {
     const tileLayerRef = useRef(null);
     const boundaryCircleRef = useRef(null);
     const markersRef = useRef({});
+    const markerClusterGroupRef = useRef(null);
     const searchMarkerRef = useRef(null);
     const routingControlRef = useRef(null);
     const userLocationRef = useRef(null);
     const fileInputRef = useRef(null);
     const searchRef = useRef(null);
+    const heatLayerRef = useRef(null);
 
     // --- Effects ---
     
+    // Fetch Weather Data
+    useEffect(() => {
+        const fetchWeather = async () => {
+            try {
+                const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=13.706&longitude=100.342&current_weather=true');
+                if (res.ok) {
+                    const data = await res.json();
+                    setWeather(data.current_weather);
+                }
+            } catch (err) {
+                console.error("Failed to fetch weather:", err);
+            }
+        };
+        fetchWeather();
+        const interval = setInterval(fetchWeather, 30 * 60 * 1000); // 30 min
+        return () => clearInterval(interval);
+    }, []);
+
+    // WebSocket Setup
+    useEffect(() => {
+        // Since we configured proxy in vite.config.js, io('/') will go to localhost:3000
+        const socket = io('/', { path: '/socket.io' });
+
+        socket.on('locationAdded', (newLoc) => {
+            setSurveyPoints(prev => {
+                // Prevent duplicate addition if already exists
+                if (prev.some(p => p.id === newLoc.id)) return prev;
+                return [...prev, newLoc];
+            });
+        });
+
+        socket.on('locationUpdated', (updatedLoc) => {
+            setSurveyPoints(prev => prev.map(p => p.id === updatedLoc.id ? updatedLoc : p));
+        });
+
+        socket.on('locationDeleted', (deletedId) => {
+            setSurveyPoints(prev => prev.filter(p => p.id !== deletedId));
+        });
+
+        return () => {
+            socket.disconnect();
+        };
+    }, []);
+
     // Fetch Data from Backend
     useEffect(() => {
-        if (!isAuthenticated) return;
-        
         const fetchLocations = async () => {
             try {
-                const res = await fetch(`${API_URL}/locations`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
+                const headers = {};
+                if (isAuthenticated) headers['Authorization'] = `Bearer ${authToken}`;
+
+                const res = await fetch(`${API_URL}/locations`, { headers });
+
                 if (res.status === 401 || res.status === 403) {
                     Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
                     return handleLogout();
@@ -246,9 +317,17 @@ function App() {
     useEffect(() => {
         if (!isAuthenticated) return;
 
-        const map = L.map("map", { zoomControl: false }).setView(NONG_KHAEM_CENTER, 14);
+        const map = L.map("map", { zoomControl: false, maxZoom: 20 }).setView(NONG_KHAEM_CENTER, 14);
         mapRef.current = map;
         L.control.zoom({ position: 'topright' }).addTo(map);
+
+        const clusterGroup = L.markerClusterGroup({
+            chunkedLoading: true,
+            disableClusteringAtZoom: 18,
+            maxClusterRadius: 60,
+        });
+        markerClusterGroupRef.current = clusterGroup;
+        map.addLayer(clusterGroup);
 
         tileLayerRef.current = L.tileLayer(
             theme === 'dark-theme' ? TILE_URLS.dark : TILE_URLS.light,
@@ -266,6 +345,11 @@ function App() {
         }).addTo(map);
 
         map.on("click", async (e) => {
+            if (!isAuthenticated) {
+                Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มจุดสำรวจได้' });
+                return;
+            }
+
             const lat = e.latlng.lat;
             const lng = e.latlng.lng;
 
@@ -306,12 +390,14 @@ function App() {
 
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition((pos) => {
+                if (mapRef.current !== map) return; // Prevent async crash if map was destroyed
+
                 const latlng = [pos.coords.latitude, pos.coords.longitude];
                 userLocationRef.current = latlng;
                 const userIcon = L.divIcon({
                     className: '',
                     html: `<div style="width:14px;height:14px;background:#3b82f6;border:2px solid white;border-radius:50%;box-shadow:0 0 10px rgba(59,130,246,0.8);"></div>`,
-                    iconSize: [14, 14], iconAnchor: [7, 7]
+                    iconSize: [18, 18], iconAnchor: [9, 9]
                 });
                 const userMarker = L.marker(latlng, { icon: userIcon, zIndexOffset: 1000, draggable: true }).addTo(map).bindPopup("ตำแหน่งปัจจุบัน (ลากเพื่อเปลี่ยนจุดเริ่มต้น)");
                 
@@ -322,16 +408,58 @@ function App() {
             }, () => {});
         }
 
-        return () => { map.remove(); };
+        return () => { 
+            map.remove(); 
+            mapRef.current = null;
+            markerClusterGroupRef.current = null;
+        };
     }, [isAuthenticated]);
 
     // Render markers
     useEffect(() => {
-        if (!mapRef.current || !isAuthenticated || !isDataLoaded) return;
-        Object.values(markersRef.current).forEach(m => mapRef.current.removeLayer(m));
+        if (!mapRef.current || !markerClusterGroupRef.current) return;
+        
+        // Remove existing markers from cluster group
+        markerClusterGroupRef.current.clearLayers();
         markersRef.current = {};
 
-        const filtered = surveyPoints.filter(p => activeFilter === 'all' || p.status === activeFilter);
+        const filtered = surveyPoints.filter(p => {
+            if (activeFilter !== 'all' && p.status !== activeFilter) return false;
+            if (searchText.trim()) {
+                const q = searchText.toLowerCase();
+                return p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q));
+            }
+            return true;
+        });
+
+        // Heatmap Logic
+        if (isHeatmapMode) {
+            if (mapRef.current.hasLayer(markerClusterGroupRef.current)) {
+                mapRef.current.removeLayer(markerClusterGroupRef.current);
+            }
+            if (heatLayerRef.current) {
+                mapRef.current.removeLayer(heatLayerRef.current);
+            }
+            
+            const heatPoints = filtered.map(p => [p.lat, p.lng, 1.0]);
+            
+            if (window.L && window.L.heatLayer) {
+                heatLayerRef.current = L.heatLayer(heatPoints, {
+                    radius: 25,
+                    blur: 15,
+                    maxZoom: 15,
+                    gradient: { 0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red' }
+                }).addTo(mapRef.current);
+            }
+            return; // Skip normal marker rendering in heatmap mode
+        } else {
+            if (heatLayerRef.current && mapRef.current.hasLayer(heatLayerRef.current)) {
+                mapRef.current.removeLayer(heatLayerRef.current);
+            }
+            if (!mapRef.current.hasLayer(markerClusterGroupRef.current)) {
+                mapRef.current.addLayer(markerClusterGroupRef.current);
+            }
+        }
 
         filtered.forEach(point => {
             const sc = point.status === 'surveyed' ? 'surveyed' : 'pending';
@@ -342,7 +470,7 @@ function App() {
             const icon = L.divIcon({
                 className: 'custom-map-marker',
                 html: `<div class="marker-pin ${sc}">${iconHtml}</div>`,
-                iconSize: [30, 42], iconAnchor: [15, 42], popupAnchor: [0, -42]
+                iconSize: [30, 42], iconAnchor: [15, 48], popupAnchor: [0, -42]
             });
 
             const marker = L.marker([point.lat, point.lng], { icon, draggable: true });
@@ -380,8 +508,13 @@ function App() {
                 }
             });
 
+            const imageHtml = point.imageUrl 
+                ? `<div class="popup-image" style="width: 100%; height: 120px; overflow: hidden; border-radius: 6px; margin-bottom: 8px;"><img src="${API_URL.replace('/api', '')}${point.imageUrl}" style="width: 100%; height: 100%; object-fit: cover;" /></div>`
+                : '';
+
             marker.bindPopup(`
                 <div class="popup-container">
+                    ${imageHtml}
                     <div class="popup-header">
                         <span class="popup-title">${point.name}</span>
                         <span class="badge ${badgeClass}">${statusLabel}</span>
@@ -391,9 +524,15 @@ function App() {
                         <span><i class="fa-solid fa-calendar-days"></i> ${point.date || '-'}</span>
                         <span><i class="fa-solid fa-location-crosshairs"></i> ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}</span>
                     </div>
-                    <div class="popup-actions">
+                    <div class="popup-actions" style="flex-wrap: wrap;">
                         <button class="popup-btn primary popup-nav-btn" data-lat="${point.lat}" data-lng="${point.lng}" data-name="${point.name.replace(/"/g,'&quot;')}">
                             <i class="fa-solid fa-route"></i> นำทาง
+                        </button>
+                        <a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}" target="_blank" class="popup-btn" style="background: var(--bg-hover); color: var(--text-primary); text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 10px; border-radius: 6px;">
+                            <i class="fa-solid fa-street-view"></i> Street View
+                        </a>
+                        <button class="popup-btn popup-pdf-btn" data-id="${point.id}" style="background: var(--bg-hover); color: var(--text-primary);">
+                            <i class="fa-solid fa-file-pdf text-red"></i> PDF
                         </button>
                         <button class="popup-btn popup-edit-btn" data-id="${point.id}">
                             <i class="fa-solid fa-pen-to-square"></i> แก้ไข
@@ -405,7 +544,8 @@ function App() {
                 </div>
             `);
 
-            marker.addTo(mapRef.current);
+            // Add to cluster group instead of map directly
+            markerClusterGroupRef.current.addLayer(marker);
             markersRef.current[point.id] = marker;
         });
 
@@ -413,16 +553,18 @@ function App() {
             const el = e.popup.getElement();
             if (!el) return;
             const navBtn = el.querySelector('.popup-nav-btn');
+            const pdfBtn = el.querySelector('.popup-pdf-btn');
             const editBtn = el.querySelector('.popup-edit-btn');
             const delBtn = el.querySelector('.popup-del-btn');
             if (navBtn) navBtn.onclick = () => startNavigation(parseFloat(navBtn.dataset.lat), parseFloat(navBtn.dataset.lng), navBtn.dataset.name);
+            if (pdfBtn) pdfBtn.onclick = () => exportToPDF(pdfBtn.dataset.id);
             if (editBtn) editBtn.onclick = () => openSurveyForm(editBtn.dataset.id);
             if (delBtn) delBtn.onclick = () => deleteSurveyPoint(delBtn.dataset.id);
         };
 
         mapRef.current.on('popupopen', onPopupOpen);
         return () => { if (mapRef.current) mapRef.current.off('popupopen', onPopupOpen); };
-    }, [surveyPoints, activeFilter, isAuthenticated, isDataLoaded]);
+    }, [surveyPoints, activeFilter, searchText, isHeatmapMode, isAuthenticated, isDataLoaded]);
 
     // ---------------------------------------------------------------------------
     // NAVIGATION (OSRM)
@@ -497,7 +639,14 @@ function App() {
     // CRUD (Connected to Backend)
     // ---------------------------------------------------------------------------
     const openSurveyForm = (id = null, lat = null, lng = null) => {
-        if (id) {
+        if (!isAuthenticated) {
+            Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มหรือแก้ไขจุดสำรวจได้', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            return;
+        }
+
+        setSelectedPhoto(null);
+        setPhotoPreview(null);
+        if (id && id !== 'new') {
             const p = surveyPoints.find(p => p.id === id);
             if (p) { setFormPoint({ ...p }); setIsFormOpen(true); }
         } else {
@@ -518,8 +667,26 @@ function App() {
             const method = isUpdate ? 'PUT' : 'POST';
             const endpoint = isUpdate ? `${API_URL}/locations/${formPoint.id}` : `${API_URL}/locations`;
             
+            let finalImageUrl = formPoint.imageUrl || null;
+            if (selectedPhoto) {
+                const formData = new FormData();
+                formData.append('photo', selectedPhoto);
+                const uploadRes = await fetch(`${API_URL}/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` },
+                    body: formData
+                });
+                if (uploadRes.ok) {
+                    const uploadData = await uploadRes.json();
+                    finalImageUrl = uploadData.imageUrl;
+                } else {
+                    Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'อัปโหลดรูปภาพไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                    return;
+                }
+            }
+
             const payloadId = isUpdate ? formPoint.id : 'point-' + Date.now();
-            const payload = { ...formPoint, id: payloadId, name: formPoint.name.trim(), notes: formPoint.notes.trim() };
+            const payload = { ...formPoint, id: payloadId, name: formPoint.name.trim(), notes: formPoint.notes.trim(), imageUrl: finalImageUrl };
 
             const res = await fetch(endpoint, {
                 method,
@@ -598,11 +765,24 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            // Append area to query to prioritize local results
-            const searchQuery = query.includes('หนองแขม') ? query : `หนองแขม ${query}`;
-            const res = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchQuery)}`);
-            setOnlineResults(await res.json());
-        } catch { setOnlineResults([]); }
+            // Use ArcGIS with location bias towards Nong Khaem (lat 13.7056, lng 100.3582)
+            const bias = `&location=100.3582,13.7056&distance=50000`;
+            const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(query)}&f=json&maxLocations=5${bias}`);
+            const data = await res.json();
+            
+            if (data.candidates && data.candidates.length > 0) {
+                const mappedResults = data.candidates.map(item => ({
+                    display_name: item.address,
+                    name: item.address.split(' ')[0] || item.address,
+                    lat: item.location.y,
+                    lon: item.location.x,
+                    source: 'arcgis'
+                }));
+                setOnlineResults(mappedResults);
+            } else {
+                setOnlineResults([]);
+            }
+        } catch (err) { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
     };
 
@@ -616,7 +796,7 @@ function App() {
         const icon = L.divIcon({
             className: 'custom-map-marker',
             html: `<div class="marker-pin" style="background:#3b82f6;"><i class="fa-solid fa-star"></i></div>`,
-            iconSize: [30, 42], iconAnchor: [15, 42], popupAnchor: [0, -42]
+            iconSize: [30, 42], iconAnchor: [15, 48], popupAnchor: [0, -42]
         });
 
         const marker = L.marker([lat, lng], { icon }).addTo(mapRef.current);
@@ -687,10 +867,200 @@ function App() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     };
 
-    const handleImportFile = (e) => {
+    // Export PDF Report
+    const exportToPDF = (id) => {
+        const point = surveyPoints.find(p => p.id === id);
+        if (!point) return;
+
+        Swal.fire({
+            title: 'กำลังสร้างรายงาน PDF',
+            text: 'กรุณารอสักครู่...',
+            allowOutsideClick: false,
+            didOpen: () => { Swal.showLoading(); }
+        });
+
+        // Create a hidden div for PDF rendering
+        const printContainer = document.createElement('div');
+        printContainer.style.padding = '40px';
+        printContainer.style.fontFamily = "'Prompt', sans-serif";
+        printContainer.style.color = '#1f2937';
+        printContainer.style.background = '#ffffff';
+        printContainer.style.width = '800px';
+
+        const statusText = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ';
+        const statusColor = point.status === 'surveyed' ? '#10b981' : '#f59e0b';
+        
+        let imgHtml = '';
+        if (point.imageUrl) {
+            imgHtml = `<div style="margin-top: 20px; text-align: center;">
+                <img src="${API_URL.replace('/api', '')}${point.imageUrl}" crossorigin="anonymous" style="max-width: 100%; max-height: 400px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" />
+            </div>`;
+        }
+
+        printContainer.innerHTML = `
+            <div style="border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1 style="font-size: 28px; font-weight: bold; margin: 0; color: #111827;">รายงานการสำรวจพื้นที่</h1>
+                    <p style="margin: 5px 0 0; color: #6b7280; font-size: 14px;">สำนักงานเขตหนองแขม (Nong Khaem Survey Map)</p>
+                </div>
+                <div style="background: ${statusColor}; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 16px;">
+                    สถานะ: ${statusText}
+                </div>
+            </div>
+            
+            <div style="background: #f9fafb; padding: 24px; border-radius: 12px; border: 1px solid #f3f4f6;">
+                <h2 style="font-size: 22px; font-weight: 600; margin: 0 0 16px; color: #1f2937;">${point.name}</h2>
+                
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; width: 150px; font-weight: bold; color: #4b5563;">วันที่ลงพื้นที่:</td>
+                        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #111827;">${point.date || '-'}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #4b5563;">พิกัด (Lat, Lng):</td>
+                        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #111827;">${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px 0; font-weight: bold; color: #4b5563; vertical-align: top;">รายละเอียด/หมายเหตุ:</td>
+                        <td style="padding: 10px 0; color: #111827; white-space: pre-wrap;">${point.notes || '-'}</td>
+                    </tr>
+                </table>
+            </div>
+            
+            ${imgHtml}
+            
+            <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #9ca3af; font-size: 12px;">
+                เอกสารนี้สร้างขึ้นโดยระบบ Nong Khaem Survey Map เมื่อ ${new Date().toLocaleString('th-TH')}
+            </div>
+        `;
+
+        const opt = {
+            margin:       0.5,
+            filename:     `Survey_Report_${point.name.replace(/\s+/g, '_')}.pdf`,
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+        };
+
+        // Ensure images are loaded before generating PDF
+        const images = printContainer.querySelectorAll('img');
+        let loadedImages = 0;
+        
+        const generatePdf = () => {
+            window.html2pdf().set(opt).from(printContainer).save().then(() => {
+                Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'ดาวน์โหลดรายงาน PDF เรียบร้อย', timer: 2000, showConfirmButton: false });
+            }).catch(err => {
+                console.error("PDF generation error:", err);
+                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'ไม่สามารถสร้าง PDF ได้' });
+            });
+        };
+
+        if (images.length > 0) {
+            images.forEach(img => {
+                img.onload = () => {
+                    loadedImages++;
+                    if (loadedImages === images.length) generatePdf();
+                };
+                img.onerror = () => {
+                    loadedImages++;
+                    if (loadedImages === images.length) generatePdf();
+                };
+            });
+        } else {
+            generatePdf();
+        }
+    };
+
+    // Export Summary of All Points to PDF
+    const exportAllToPDF = () => {
+        if (surveyPoints.length === 0) {
+            Swal.fire({ icon: 'warning', title: 'ไม่มีข้อมูล', text: 'ไม่มีจุดสำรวจสำหรับสร้างรายงาน' });
+            return;
+        }
+
+        Swal.fire({
+            title: 'กำลังสร้างรายงานสรุป (PDF)',
+            text: 'กรุณารอสักครู่...',
+            allowOutsideClick: false,
+            didOpen: () => { Swal.showLoading(); }
+        });
+
+        const printContainer = document.createElement('div');
+        printContainer.style.padding = '40px';
+        printContainer.style.fontFamily = "'Prompt', sans-serif";
+        printContainer.style.color = '#1f2937';
+        printContainer.style.background = '#ffffff';
+        printContainer.style.width = '1000px';
+
+        const rowsHtml = surveyPoints.map((point, index) => {
+            const statusText = point.status === 'surveyed' ? 'ตรวจแล้ว' : 'ยังไม่ตรวจ';
+            const statusColor = point.status === 'surveyed' ? '#10b981' : '#f59e0b';
+            return `
+                <tr style="border-bottom: 1px solid #e5e7eb;">
+                    <td style="padding: 12px 8px; text-align: center;">${index + 1}</td>
+                    <td style="padding: 12px 8px; font-weight: bold;">${point.name}</td>
+                    <td style="padding: 12px 8px;">${point.date || '-'}</td>
+                    <td style="padding: 12px 8px;">${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}</td>
+                    <td style="padding: 12px 8px; color: ${statusColor}; font-weight: bold;">${statusText}</td>
+                    <td style="padding: 12px 8px; font-size: 12px; color: #6b7280;">${point.notes || '-'}</td>
+                </tr>
+            `;
+        }).join('');
+
+        printContainer.innerHTML = `
+            <div style="border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end;">
+                <div>
+                    <h1 style="font-size: 28px; font-weight: bold; margin: 0; color: #111827;">รายงานสรุปผลการสำรวจพื้นที่</h1>
+                    <p style="margin: 5px 0 0; color: #6b7280; font-size: 16px;">สำนักงานเขตหนองแขม (Nong Khaem Survey Map)</p>
+                </div>
+                <div style="text-align: right;">
+                    <p style="margin: 0; font-weight: bold; font-size: 18px;">รวมทั้งหมด: ${surveyPoints.length} จุด</p>
+                    <p style="margin: 5px 0 0; color: #6b7280;">ณ วันที่ ${new Date().toLocaleDateString('th-TH')}</p>
+                </div>
+            </div>
+            
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead>
+                    <tr style="background: #f3f4f6; border-bottom: 2px solid #d1d5db;">
+                        <th style="padding: 12px 8px; text-align: center; width: 50px;">ลำดับ</th>
+                        <th style="padding: 12px 8px; width: 250px;">สถานที่</th>
+                        <th style="padding: 12px 8px; width: 120px;">วันที่ลงพื้นที่</th>
+                        <th style="padding: 12px 8px; width: 180px;">พิกัด</th>
+                        <th style="padding: 12px 8px; width: 100px;">สถานะ</th>
+                        <th style="padding: 12px 8px;">หมายเหตุ</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+            
+            <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #9ca3af; font-size: 12px;">
+                เอกสารสรุปผลการสำรวจสร้างโดยระบบอัตโนมัติ
+            </div>
+        `;
+
+        const opt = {
+            margin:       0.5,
+            filename:     `Summary_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2 },
+            jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' }
+        };
+
+        window.html2pdf().set(opt).from(printContainer).save().then(() => {
+            Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'ดาวน์โหลดรายงานสรุป PDF เรียบร้อย', timer: 2000, showConfirmButton: false });
+        }).catch(err => {
+            console.error("PDF generation error:", err);
+            Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'ไม่สามารถสร้าง PDF ได้' });
+        });
+    };
+
+    const handleImportFile = async (e) => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
         reader.onload = async (ev) => {
@@ -750,9 +1120,6 @@ function App() {
     // ---------------------------------------------------------------------------
     // RENDER
     // ---------------------------------------------------------------------------
-    if (!isAuthenticated) {
-        return <LoginScreen onLogin={handleLogin} />;
-    }
 
     return (
         <div className="app-container">
@@ -774,7 +1141,7 @@ function App() {
                 <div className="topbar-divider"></div>
 
                 {/* Compact stats */}
-                <div className="stats-bar">
+                <div className="stats-bar" onClick={() => setIsDashboardOpen(true)} style={{ cursor: 'pointer', transition: 'all 0.2s', padding: '0 8px', borderRadius: '8px' }} title="คลิกเพื่อดูรายงานสถิติ">
                     {/* Mini progress ring */}
                     <div className="progress-ring-sm">
                         <svg width="36" height="36">
@@ -806,6 +1173,11 @@ function App() {
                         <span className="label">ยังไม่ตรวจ</span>
                     </div>
                 </div>
+                
+                {/* Dashboard Button */}
+                <button className="btn btn-primary" onClick={() => setIsDashboardOpen(true)} style={{ marginLeft: '12px', padding: '6px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
+                    <i className="fa-solid fa-chart-pie"></i> สถิติ
+                </button>
 
                 <div className="topbar-divider"></div>
 
@@ -876,38 +1248,48 @@ function App() {
                 <div style={{ flex: 1 }}></div>
 
                 {/* Action buttons */}
-                <div className="topbar-actions">
-                    <button className="icon-btn primary" onClick={() => { const c = mapRef.current?.getCenter(); openSurveyForm(null, c?.lat, c?.lng); }} title="เพิ่มจุดสำรวจ">
+                <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px', border: '1px solid var(--border-color)' }}>
+                        <button className="btn" onClick={exportData} title="ดาวน์โหลดตารางข้อมูล (CSV)" style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.1)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                            <i className="fa-solid fa-file-csv text-green" style={{ fontSize: '16px' }}></i> โหลด CSV
+                        </button>
+                        <div style={{ width: '1px', background: 'var(--border-color)', margin: '4px 0' }}></div>
+                        <button className="btn" onClick={exportAllToPDF} title="สร้างรายงานสรุปทั้งหมด (PDF)" style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                            <i className="fa-solid fa-file-pdf text-red" style={{ fontSize: '16px' }}></i> โหลด PDF
+                        </button>
+                    </div>
+
+                    <button className="icon-btn" onClick={() => fileInputRef.current.click()} title="นำเข้าข้อมูล (JSON/CSV)">
+                        <i className="fa-solid fa-file-import"></i>
+                        <span className="icon-btn-tooltip">นำเข้าข้อมูล</span>
+                    </button>
+                    
+                    <button className="icon-btn" onClick={() => setListOpen(o => !o)} title="เปิดแถบรายชื่อจุดสำรวจ">
+                        <i className="fa-solid fa-list-ul"></i>
+                        <span className="icon-btn-tooltip">รายการจุดสำรวจ</span>
+                    </button>
+
+                    <button className="icon-btn primary" onClick={() => { const c = mapRef.current?.getCenter(); openSurveyForm(null, c?.lat, c?.lng); }} title="เพิ่มจุดสำรวจใหม่" style={{ marginLeft: '8px', background: 'var(--primary)', color: 'white' }}>
                         <i className="fa-solid fa-plus"></i>
                         <span className="icon-btn-tooltip">เพิ่มจุดสำรวจ</span>
-                    </button>
-                    <button className="icon-btn" onClick={() => setListOpen(o => !o)} title="รายการจุดสำรวจ">
-                        <i className="fa-solid fa-list-ul"></i>
-                        <span className="icon-btn-tooltip">รายการ</span>
-                    </button>
-                    <button className="icon-btn" onClick={exportData} title="ส่งออก CSV">
-                        <i className="fa-solid fa-file-export"></i>
-                        <span className="icon-btn-tooltip">ส่งออก CSV</span>
-                    </button>
-                    <button className="icon-btn" onClick={() => fileInputRef.current.click()} title="นำเข้า JSON">
-                        <i className="fa-solid fa-file-import"></i>
-                        <span className="icon-btn-tooltip">นำเข้า JSON</span>
                     </button>
 
                     <div className="topbar-divider"></div>
 
-                    <div style={{ fontSize: 12, marginRight: 8, color: 'var(--text-secondary)' }}>
-                        <i className="fa-solid fa-user-circle"></i> {authUser?.username}
-                    </div>
-
-                    <button className="theme-toggle-btn" onClick={() => setTheme(t => t === 'dark-theme' ? 'light-theme' : 'dark-theme')} title="เปลี่ยนธีม">
-                        <i className={theme === 'dark-theme' ? 'fa-solid fa-moon' : 'fa-solid fa-sun'}></i>
-                    </button>
-
-                    <button className="icon-btn danger" onClick={handleLogout} title="ออกจากระบบ" style={{ marginLeft: 4 }}>
-                        <i className="fa-solid fa-arrow-right-from-bracket"></i>
-                        <span className="icon-btn-tooltip">ออกจากระบบ</span>
-                    </button>
+                    {isAuthenticated ? (
+                        <>
+                            <div style={{ fontSize: 12, marginRight: 8, color: 'var(--text-secondary)' }}>
+                                <i className="fa-solid fa-user-circle"></i> {authUser?.username}
+                            </div>
+                            <button className="btn" onClick={handleLogout} title="ออกจากระบบ" style={{ background: '#ef4444', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 8, cursor: 'pointer', border: 'none', transition: 'all 0.2s' }} onMouseOver={e => e.currentTarget.style.background = '#dc2626'} onMouseOut={e => e.currentTarget.style.background = '#ef4444'}>
+                                <i className="fa-solid fa-arrow-right-from-bracket"></i> ออกจากระบบ
+                            </button>
+                        </>
+                    ) : (
+                        <button className="btn" onClick={() => setShowLoginModal(true)} title="เข้าสู่ระบบ" style={{ background: 'var(--primary)', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 8, cursor: 'pointer', border: 'none' }}>
+                            <i className="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ
+                        </button>
+                    )}
 
                     <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".json" style={{ display: 'none' }} />
                 </div>
@@ -919,10 +1301,45 @@ function App() {
 
                 {/* Floating Map Controls */}
                 <div className="map-floating-controls">
+                    {/* Weather Widget */}
+                    {weather && (
+                        <div className="weather-widget" style={{
+                            background: 'var(--card-bg)', padding: '8px 12px', borderRadius: '20px', 
+                            boxShadow: 'var(--shadow-md)', display: 'flex', alignItems: 'center', gap: '8px', 
+                            fontSize: '14px', fontWeight: 'bold', color: 'var(--text-primary)', marginBottom: '8px'
+                        }}>
+                            <i className={
+                                weather.weathercode === 0 ? "fa-solid fa-sun text-yellow" :
+                                [1,2,3].includes(weather.weathercode) ? "fa-solid fa-cloud-sun text-yellow" :
+                                [51,53,55,61,63,65].includes(weather.weathercode) ? "fa-solid fa-cloud-rain text-blue" :
+                                [95].includes(weather.weathercode) ? "fa-solid fa-cloud-bolt text-yellow" : "fa-solid fa-cloud"
+                            } style={{ fontSize: '18px' }}></i>
+                            <span>{weather.temperature}°C</span>
+                        </div>
+                    )}
+                    <button 
+                        className={`map-ctrl-btn ${isHeatmapMode ? 'active' : ''}`} 
+                        onClick={() => setIsHeatmapMode(!isHeatmapMode)}
+                        title="โหมดแผนที่ความหนาแน่น (Heatmap)"
+                        style={{ marginTop: '8px' }}
+                    >
+                        <i className="fa-solid fa-fire"></i>
+                    </button>
+
+                    <button 
+                        className="map-ctrl-btn" 
+                        onClick={() => setTheme(theme === 'dark-theme' ? 'light-theme' : 'dark-theme')}
+                        title={theme === 'dark-theme' ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
+                        style={{ marginTop: '8px' }}
+                    >
+                        <i className={theme === 'dark-theme' ? "fa-solid fa-sun" : "fa-solid fa-moon"}></i>
+                    </button>
+                    
                     <button 
                         className={`map-ctrl-btn ${isSatellite ? 'active' : ''}`} 
                         onClick={() => setIsSatellite(!isSatellite)}
                         title="โหมดดาวเทียม"
+                        style={{ marginTop: '8px' }}
                     >
                         <i className="fa-solid fa-satellite"></i>
                     </button>
@@ -990,6 +1407,12 @@ function App() {
                                             </div>
                                         </div>
                                         <div className="item-actions">
+                                            <a href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}`} target="_blank" rel="noreferrer" className="item-action-btn" onClick={e => e.stopPropagation()} style={{ textDecoration: 'none' }}>
+                                                <i className="fa-solid fa-street-view"></i> Street View
+                                            </a>
+                                            <button className="item-action-btn" onClick={e => { e.stopPropagation(); exportToPDF(point.id); }}>
+                                                <i className="fa-solid fa-file-pdf text-red"></i> PDF
+                                            </button>
                                             <button className="item-action-btn" onClick={e => { e.stopPropagation(); startNavigation(point.lat, point.lng, point.name); }}>
                                                 <i className="fa-solid fa-route text-green"></i> นำทาง
                                             </button>
@@ -1046,6 +1469,13 @@ function App() {
                 </div>
             </main>
 
+            {/* ===== LOGIN MODAL ===== */}
+            {showLoginModal && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+                    <LoginScreen onLogin={handleLogin} />
+                </div>
+            )}
+
             {/* ===== FORM MODAL ===== */}
             {isFormOpen && (
                 <div className="modal-overlay">
@@ -1076,6 +1506,35 @@ function App() {
                                     </label>
                                 </div>
                             </div>
+                            
+                            {/* Photo Upload Section */}
+                            <div className="form-group">
+                                <label>ภาพถ่ายหน้างาน</label>
+                                <div className="photo-upload-box">
+                                    {photoPreview || formPoint.imageUrl ? (
+                                        <div className="photo-preview-container" style={{ position: 'relative', width: '100%', height: '160px', borderRadius: '8px', overflow: 'hidden', marginBottom: '8px' }}>
+                                            <img src={photoPreview || formPoint.imageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            <button type="button" onClick={() => { setSelectedPhoto(null); setPhotoPreview(null); setFormPoint(p => ({...p, imageUrl: null})); }} 
+                                                style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: '30px', height: '30px', cursor: 'pointer' }}>
+                                                <i className="fa-solid fa-times"></i>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <label className="photo-upload-label" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100px', border: '2px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                            <i className="fa-solid fa-camera" style={{ fontSize: '24px', marginBottom: '8px' }}></i>
+                                            <span>แตะเพื่อถ่ายรูป หรือเลือกรูปภาพ</span>
+                                            <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={(e) => {
+                                                const file = e.target.files[0];
+                                                if (file) {
+                                                    setSelectedPhoto(file);
+                                                    setPhotoPreview(URL.createObjectURL(file));
+                                                }
+                                            }} />
+                                        </label>
+                                    )}
+                                </div>
+                            </div>
+
                             <div className="form-row">
                                 <div className="form-group col">
                                     <label>ละติจูด</label>
@@ -1100,6 +1559,53 @@ function App() {
                                 <button type="submit" className="btn btn-primary">บันทึกข้อมูล</button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+            {/* ===== DASHBOARD MODAL ===== */}
+            {isDashboardOpen && (
+                <div className="modal-overlay">
+                    <div className="modal-card" style={{ maxWidth: '600px', width: '90%' }}>
+                        <header className="modal-header">
+                            <h3><i className="fa-solid fa-chart-pie"></i> รายงานสถิติภาพรวม (Dashboard)</h3>
+                            <button className="modal-close" onClick={() => setIsDashboardOpen(false)}>
+                                <i className="fa-solid fa-xmark"></i>
+                            </button>
+                        </header>
+                        <div className="modal-body" style={{ padding: '20px' }}>
+                            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
+                                {/* Donut Chart */}
+                                <div style={{ 
+                                    width: '180px', height: '180px', borderRadius: '50%', 
+                                    background: `conic-gradient(var(--color-green) ${stats.percent}%, var(--color-yellow) 0)`,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    boxShadow: 'var(--shadow-md)'
+                                }}>
+                                    <div style={{ width: '130px', height: '130px', borderRadius: '50%', background: 'var(--card-bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                        <span style={{ fontSize: '32px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{stats.percent}%</span>
+                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>สำเร็จแล้ว</span>
+                                    </div>
+                                </div>
+                                
+                                {/* Stats Details */}
+                                <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    <div style={{ padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--primary)' }}>
+                                        <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>จุดสำรวจทั้งหมด</div>
+                                        <div style={{ fontSize: '28px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{stats.total} <span style={{fontSize:'16px', fontWeight:'normal'}}>จุด</span></div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '16px' }}>
+                                        <div style={{ flex: 1, padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--color-green)' }}>
+                                            <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>สำรวจแล้ว</div>
+                                            <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--color-green)' }}>{stats.surveyed}</div>
+                                        </div>
+                                        <div style={{ flex: 1, padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--color-yellow)' }}>
+                                            <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>ยังไม่ตรวจ</div>
+                                            <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--color-yellow)' }}>{stats.pending}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
