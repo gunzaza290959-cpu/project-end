@@ -4,6 +4,7 @@ import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet-routing-machine';
+import 'leaflet.heat';
 import Swal from 'sweetalert2';
 import { io } from 'socket.io-client';
 
@@ -408,6 +409,14 @@ function App() {
             }, () => {});
         }
 
+        // Add mouse move listener for high-performance coordinate display
+        map.on('mousemove', (e) => {
+            const coordDisplay = document.getElementById('mouse-coords-display');
+            if (coordDisplay) {
+                coordDisplay.innerText = `Lat: ${e.latlng.lat.toFixed(5)}, Lng: ${e.latlng.lng.toFixed(5)}`;
+            }
+        });
+
         return () => { 
             map.remove(); 
             mapRef.current = null;
@@ -765,20 +774,38 @@ function App() {
         if (!query) { setOnlineResults([]); return; }
         setIsSearchingOnline(true);
         try {
-            // Use ArcGIS with location bias towards Nong Khaem (lat 13.7056, lng 100.3582)
-            const bias = `&location=100.3582,13.7056&distance=50000`;
-            const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(query)}&f=json&maxLocations=5${bias}`);
+            // Force scope to Nong Khaem / Nong Khang Phlu if user didn't specify
+            let scopedQuery = query;
+            if (!scopedQuery.includes('หนองแขม') && !scopedQuery.includes('หนองค้างพลู')) {
+                scopedQuery += ' เขตหนองแขม กรุงเทพมหานคร';
+            }
+
+            // Use ArcGIS with strict location bias towards Nong Khaem (lat 13.7056, lng 100.3582) within 8km, and get all fields
+            const bias = `&location=100.3582,13.7056&distance=8000&outFields=*`;
+            const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(scopedQuery)}&f=json&maxLocations=10${bias}`);
             const data = await res.json();
             
             if (data.candidates && data.candidates.length > 0) {
-                const mappedResults = data.candidates.map(item => ({
-                    display_name: item.address,
-                    name: item.address.split(' ')[0] || item.address,
-                    lat: item.location.y,
-                    lon: item.location.x,
-                    source: 'arcgis'
-                }));
-                setOnlineResults(mappedResults);
+                // Strictly filter results to ONLY those inside Nong Khaem's geographic bounding box
+                const strictNongKhaemCandidates = data.candidates.filter(item => {
+                    const lat = item.location.y;
+                    const lng = item.location.x;
+                    // Bounding box for Nong Khaem / Nong Khang Phlu
+                    return lat >= 13.660 && lat <= 13.760 && lng >= 100.320 && lng <= 100.385;
+                });
+
+                if (strictNongKhaemCandidates.length > 0) {
+                    const mappedResults = strictNongKhaemCandidates.map(item => ({
+                        display_name: item.attributes?.LongLabel || item.address,
+                        name: item.address,
+                        lat: item.location.y,
+                        lon: item.location.x,
+                        source: 'arcgis'
+                    }));
+                    setOnlineResults(mappedResults.slice(0, 5));
+                } else {
+                    setOnlineResults([]);
+                }
             } else {
                 setOnlineResults([]);
             }
@@ -1296,8 +1323,31 @@ function App() {
             </header>
 
             {/* ===== MAP ===== */}
-            <main className="map-container-wrapper">
+            <main className="map-container-wrapper" style={{ position: 'relative' }}>
                 <div id="map" className="map-view"></div>
+                
+                {/* Real-time Mouse Coordinate Display */}
+                <div 
+                    id="mouse-coords-display" 
+                    style={{ 
+                        position: 'absolute', 
+                        bottom: '20px', 
+                        left: '50%', 
+                        transform: 'translateX(-50%)', 
+                        background: 'rgba(0, 0, 0, 0.65)', 
+                        color: '#fff', 
+                        padding: '4px 12px', 
+                        borderRadius: '20px', 
+                        fontSize: '12px', 
+                        fontFamily: 'monospace', 
+                        zIndex: 1000,
+                        pointerEvents: 'none',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+                        backdropFilter: 'blur(4px)'
+                    }}
+                >
+                    Lat: -, Lng: -
+                </div>
 
                 {/* Floating Map Controls */}
                 <div className="map-floating-controls">
