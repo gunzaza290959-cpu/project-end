@@ -14,9 +14,9 @@ import { io } from 'socket.io-client';
 const API_URL = '/api';
 const NONG_KHAEM_CENTER = [13.7056, 100.3582];
 const TILE_URLS = {
-    dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    light: "http://mt0.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}",
-    satellite: "http://mt0.google.com/vt/lyrs=y&hl=th&x={x}&y={y}&z={z}"
+    dark: "https://mt1.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}",
+    light: "https://mt1.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}",
+    satellite: "https://mt1.google.com/vt/lyrs=y&hl=th&x={x}&y={y}&z={z}"
 };
 const ATTRIBUTION = '&copy; <a href="https://maps.google.com">Google Maps</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
@@ -189,6 +189,8 @@ function App() {
     // Enterprise Features States
     const [weather, setWeather] = useState(null);
     const [isHeatmapMode, setIsHeatmapMode] = useState(false);
+    const [isFollowing, setIsFollowing] = useState(false);
+    const [filterRadius, setFilterRadius] = useState(0);
 
     const isFormOpenRef = useRef(isFormOpen);
     
@@ -216,6 +218,8 @@ function App() {
     const fileInputRef = useRef(null);
     const searchRef = useRef(null);
     const heatLayerRef = useRef(null);
+    const watchIdRef = useRef(null);
+    const userMarkerRef = useRef(null);
 
     // --- Effects ---
     
@@ -316,8 +320,6 @@ function App() {
 
     // Initialize Leaflet map
     useEffect(() => {
-        if (!isAuthenticated) return;
-
         const map = L.map("map", { zoomControl: false, maxZoom: 20 }).setView(NONG_KHAEM_CENTER, 14);
         mapRef.current = map;
         L.control.zoom({ position: 'topright' }).addTo(map);
@@ -401,6 +403,7 @@ function App() {
                     iconSize: [18, 18], iconAnchor: [9, 9]
                 });
                 const userMarker = L.marker(latlng, { icon: userIcon, zIndexOffset: 1000, draggable: true }).addTo(map).bindPopup("ตำแหน่งปัจจุบัน (ลากเพื่อเปลี่ยนจุดเริ่มต้น)");
+                userMarkerRef.current = userMarker;
                 
                 userMarker.on('dragend', (e) => {
                     const newPos = e.target.getLatLng();
@@ -424,6 +427,41 @@ function App() {
         };
     }, [isAuthenticated]);
 
+    // GPS Live Tracking
+    useEffect(() => {
+        if (!isFollowing) {
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+                watchIdRef.current = null;
+            }
+            return;
+        }
+
+        if (navigator.geolocation) {
+            watchIdRef.current = navigator.geolocation.watchPosition(
+                (pos) => {
+                    const latlng = [pos.coords.latitude, pos.coords.longitude];
+                    userLocationRef.current = latlng;
+                    if (mapRef.current) {
+                        mapRef.current.setView(latlng, mapRef.current.getZoom(), { animate: false });
+                    }
+                    if (userMarkerRef.current) {
+                        userMarkerRef.current.setLatLng(latlng);
+                    }
+                },
+                (err) => console.warn("GPS Tracking Error:", err),
+                { enableHighAccuracy: true, maximumAge: 5000, timeout: 5000 }
+            );
+        }
+
+        return () => {
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+                watchIdRef.current = null;
+            }
+        };
+    }, [isFollowing]);
+
     // Render markers
     useEffect(() => {
         if (!mapRef.current || !markerClusterGroupRef.current) return;
@@ -436,7 +474,11 @@ function App() {
             if (activeFilter !== 'all' && p.status !== activeFilter) return false;
             if (searchText.trim()) {
                 const q = searchText.toLowerCase();
-                return p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q));
+                if (!(p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q)))) return false;
+            }
+            if (filterRadius > 0 && userLocationRef.current && mapRef.current) {
+                const dist = mapRef.current.distance(userLocationRef.current, [p.lat, p.lng]);
+                if (dist > filterRadius) return false;
             }
             return true;
         });
@@ -647,6 +689,29 @@ function App() {
     // ---------------------------------------------------------------------------
     // CRUD (Connected to Backend)
     // ---------------------------------------------------------------------------
+    
+    const exportToCSV = () => {
+        if (surveyPoints.length === 0) return Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ส่งออก', 'info');
+        const headers = ['ID', 'ชื่อจุดสำรวจ', 'สถานะ', 'ละติจูด', 'ลองจิจูด', 'บันทึก', 'วันที่'];
+        const csvContent = [
+            headers.join(','),
+            ...surveyPoints.map(p => 
+                `"${p.id}","${p.name}","${p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}","${p.lat}","${p.lng}","${p.notes ? p.notes.replace(/\n/g, ' ') : ''}","${p.date}"`
+            )
+        ].join('\n');
+        
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `survey_data_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    // ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
     const openSurveyForm = (id = null, lat = null, lng = null) => {
         if (!isAuthenticated) {
             Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มหรือแก้ไขจุดสำรวจได้', background: 'var(--card-bg)', color: 'var(--text-primary)' });
@@ -777,41 +842,41 @@ function App() {
             // Force scope to Nong Khaem / Nong Khang Phlu if user didn't specify
             let scopedQuery = query;
             if (!scopedQuery.includes('หนองแขม') && !scopedQuery.includes('หนองค้างพลู')) {
-                scopedQuery += ' เขตหนองแขม กรุงเทพมหานคร';
+                scopedQuery += ' เขตหนองแขม';
             }
 
-            // Use ArcGIS with strict location bias towards Nong Khaem (lat 13.7056, lng 100.3582) within 8km, and get all fields
+            // Use ArcGIS for best Thai coverage without API keys
             const bias = `&location=100.3582,13.7056&distance=8000&outFields=*`;
             const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(scopedQuery)}&f=json&maxLocations=10${bias}`);
             const data = await res.json();
             
             if (data.candidates && data.candidates.length > 0) {
-                // Strictly filter results to ONLY those inside Nong Khaem's geographic bounding box
-                const strictNongKhaemCandidates = data.candidates.filter(item => {
-                    const lat = item.location.y;
-                    const lng = item.location.x;
-                    // Bounding box for Nong Khaem / Nong Khang Phlu
-                    return lat >= 13.660 && lat <= 13.760 && lng >= 100.320 && lng <= 100.385;
-                });
-
-                if (strictNongKhaemCandidates.length > 0) {
-                    const mappedResults = strictNongKhaemCandidates.map(item => ({
-                        display_name: item.attributes?.LongLabel || item.address,
-                        name: item.address,
-                        lat: item.location.y,
-                        lon: item.location.x,
-                        source: 'arcgis'
-                    }));
-                    setOnlineResults(mappedResults.slice(0, 5));
-                } else {
-                    setOnlineResults([]);
-                }
+                const mappedResults = data.candidates.map(item => ({
+                    display_name: item.attributes?.LongLabel || item.address,
+                    name: item.address,
+                    lat: item.location.y,
+                    lon: item.location.x,
+                    source: 'arcgis'
+                }));
+                setOnlineResults(mappedResults.slice(0, 5));
             } else {
                 setOnlineResults([]);
             }
         } catch (err) { setOnlineResults([]); }
         finally { setIsSearchingOnline(false); }
     };
+
+    // Auto-search when user types
+    useEffect(() => {
+        const delaySearch = setTimeout(() => {
+            if (searchText.trim().length > 1) {
+                searchOnline();
+            } else if (searchText.trim().length === 0) {
+                setOnlineResults([]);
+            }
+        }, 800);
+        return () => clearTimeout(delaySearch);
+    }, [searchText]);
 
     const handleSearchItemClick = (item) => {
         const lat = parseFloat(item.lat);
@@ -829,38 +894,18 @@ function App() {
         const marker = L.marker([lat, lng], { icon }).addTo(mapRef.current);
         searchMarkerRef.current = marker;
 
-        marker.bindPopup(`
-            <div class="popup-container">
-                <div class="popup-header">
-                    <span class="popup-title">${shortName}</span>
-                    <span class="badge" style="background:var(--primary-glow);color:var(--primary);">ค้นพบ</span>
-                </div>
-                <p class="popup-desc">คลิกปุ่มด้านล่างเพื่อดำเนินการ</p>
-                <div class="popup-actions">
-                    <button class="popup-btn primary popup-search-nav-btn" data-lat="${lat}" data-lng="${lng}" data-name="${shortName.replace(/"/g,'&quot;')}">
-                        <i class="fa-solid fa-route"></i> นำทาง
-                    </button>
-                    <button class="popup-btn popup-search-add-btn" data-lat="${lat}" data-lng="${lng}" data-name="${shortName.replace(/"/g,'&quot;')}">
-                        <i class="fa-solid fa-plus"></i> บันทึกจุดสำรวจ
-                    </button>
-                </div>
-            </div>
-        `).openPopup();
-
-        mapRef.current.flyTo([lat, lng], 16, { duration: 1.2 });
-
+        mapRef.current.flyTo([lat, lng], 18, { duration: 1.5 });
+        
         setTimeout(() => {
-            const el = marker.getPopup()?.getElement();
-            if (el) {
-                const nb = el.querySelector('.popup-search-nav-btn');
-                const ab = el.querySelector('.popup-search-add-btn');
-                if (nb) nb.onclick = () => startNavigation(lat, lng, shortName);
-                if (ab) ab.onclick = () => {
-                    setFormPoint(p => ({ ...p, lat, lng, name: shortName }));
-                    setIsFormOpen(true);
-                };
-            }
-        }, 100);
+            setFormPoint(p => ({ ...p, lat, lng, name: shortName }));
+            setIsFormOpen(true);
+            setTimeout(() => {
+                const nameInput = document.getElementById('name');
+                if (nameInput) {
+                    nameInput.value = shortName;
+                }
+            }, 100);
+        }, 1500);
 
         setOnlineResults([]);
     };
@@ -1205,6 +1250,9 @@ function App() {
                 <button className="btn btn-primary" onClick={() => setIsDashboardOpen(true)} style={{ marginLeft: '12px', padding: '6px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
                     <i className="fa-solid fa-chart-pie"></i> สถิติ
                 </button>
+                <button className="btn" onClick={exportToCSV} style={{ marginLeft: "8px", padding: "6px 16px", borderRadius: "20px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "bold", background: "#10b981", color: "white", border: "none" }}>
+                    <i className="fa-solid fa-file-csv"></i> CSV
+                </button>
 
                 <div className="topbar-divider"></div>
 
@@ -1429,6 +1477,19 @@ function App() {
                             </div>
                         </div>
 
+                        <div style={{ padding: '0 16px 12px 16px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <i className="fa-solid fa-street-view" style={{ color: 'var(--text-secondary)' }}></i>
+                            <select 
+                                value={filterRadius} 
+                                onChange={(e) => setFilterRadius(Number(e.target.value))}
+                                style={{ flex: 1, padding: '6px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '13px' }}
+                            >
+                                <option value={0}>แสดงทั้งหมด (ไม่จำกัดระยะทาง)</option>
+                                <option value={500}>ใกล้ฉัน (ภายใน 500 เมตร)</option>
+                                <option value={1000}>ใกล้ฉัน (ภายใน 1 กม.)</option>
+                                <option value={3000}>ใกล้ฉัน (ภายใน 3 กม.)</option>
+                            </select>
+                        </div>
                         <div className="locations-list">
                             {!isDataLoaded ? (
                                 <div className="empty-state">
@@ -1455,23 +1516,6 @@ function App() {
                                                 <span><i className="fa-solid fa-calendar-day"></i> {point.date || '-'}</span>
                                                 <span><i className="fa-solid fa-location-arrow"></i> {point.lat.toFixed(4)}, {point.lng.toFixed(4)}</span>
                                             </div>
-                                        </div>
-                                        <div className="item-actions">
-                                            <a href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}`} target="_blank" rel="noreferrer" className="item-action-btn" onClick={e => e.stopPropagation()} style={{ textDecoration: 'none' }}>
-                                                <i className="fa-solid fa-street-view"></i> Street View
-                                            </a>
-                                            <button className="item-action-btn" onClick={e => { e.stopPropagation(); exportToPDF(point.id); }}>
-                                                <i className="fa-solid fa-file-pdf text-red"></i> PDF
-                                            </button>
-                                            <button className="item-action-btn" onClick={e => { e.stopPropagation(); startNavigation(point.lat, point.lng, point.name); }}>
-                                                <i className="fa-solid fa-route text-green"></i> นำทาง
-                                            </button>
-                                            <button className="item-action-btn" onClick={e => { e.stopPropagation(); openSurveyForm(point.id); }}>
-                                                <i className="fa-solid fa-pen-to-square"></i> แก้ไข
-                                            </button>
-                                            <button className="item-action-btn delete" onClick={e => { e.stopPropagation(); deleteSurveyPoint(point.id); }}>
-                                                <i className="fa-solid fa-trash-can"></i> ลบ
-                                            </button>
                                         </div>
                                     </div>
                                 );
