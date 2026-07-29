@@ -74,33 +74,21 @@ const db = new sqlite3.Database(dbPath, (err) => {
             lng REAL,
             notes TEXT,
             date TEXT,
-            imageUrl TEXT
+            imageUrl TEXT,
+            houseNumber TEXT,
+            address TEXT
         )`, (err) => {
             if (!err) {
-                // Migration: Add imageUrl to existing table if not exists
+                // Migrations for databases created by earlier versions.
                 db.run(`ALTER TABLE locations ADD COLUMN imageUrl TEXT`, () => {});
-            }
-            if (err) console.error("Error creating locations table:", err);
-            else {
-                // Insert mock data if empty
-                db.get("SELECT COUNT(*) as count FROM locations", (err, row) => {
-                    if (row && row.count === 0) {
-                        const mockData = [
-                            { id: "mock-1", name: "สำนักงานเขตหนองแขม", status: "surveyed", lat: 13.705681, lng: 100.358245, notes: "สำนักงานหลัก ประสานงานลงพื้นที่สำรวจเขตหนองแขม", date: "2026-06-01" },
-                            { id: "mock-2", name: "วัดหนองแขม", status: "surveyed", lat: 13.693352, lng: 100.342123, notes: "จุดประสานงานชุมชน", date: "2026-06-03" },
-                            { id: "mock-3", name: "มหาวิทยาลัยเอเชียอาคเนย์", status: "surveyed", lat: 13.706121, lng: 100.362142, notes: "สำรวจจุดจอดรถ", date: "2026-06-05" },
-                            { id: "mock-4", name: "ตลาดศูนย์การค้าหนองแขม", status: "pending", lat: 13.704251, lng: 100.347852, notes: "จุดร้องเรียนขยะอุดตัน", date: "2026-06-12" }
-                        ];
-                        
-                        const stmt = db.prepare("INSERT INTO locations (id, name, status, lat, lng, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                        mockData.forEach(item => {
-                            stmt.run(item.id, item.name, item.status, item.lat, item.lng, item.notes, item.date);
-                        });
-                        stmt.finalize();
-                        console.log("Mock location data inserted.");
-                    }
+                db.run(`ALTER TABLE locations ADD COLUMN houseNumber TEXT`, () => {});
+                db.run(`ALTER TABLE locations ADD COLUMN address TEXT`, () => {});
+                // Remove only the old built-in demo records. Keep all user data.
+                db.run(`DELETE FROM locations WHERE id LIKE 'mock-%'`, (deleteErr) => {
+                    if (deleteErr) console.error("Error removing mock locations:", deleteErr);
                 });
             }
+            if (err) console.error("Error creating locations table:", err);
         });
     }
 });
@@ -179,12 +167,12 @@ app.get('/api/locations', (req, res) => {
 
 // Add new location (Protected)
 app.post('/api/locations', authenticateToken, (req, res) => {
-    const { id, name, status, lat, lng, notes, date, imageUrl } = req.body;
-    db.run(`INSERT INTO locations (id, name, status, lat, lng, notes, date, imageUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, name, status, lat, lng, notes, date, imageUrl],
+    const { id, name, status, lat, lng, notes, date, imageUrl, houseNumber, address } = req.body;
+    db.run(`INSERT INTO locations (id, name, status, lat, lng, notes, date, imageUrl, houseNumber, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, name, status, lat, lng, notes, date, imageUrl, houseNumber, address],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
-            const newLoc = { id, name, status, lat, lng, notes, date, imageUrl };
+            const newLoc = { id, name, status, lat, lng, notes, date, imageUrl, houseNumber, address };
             io.emit('locationAdded', newLoc);
             res.json({ success: true, message: "เพิ่มข้อมูลสำเร็จ" });
         }
@@ -193,14 +181,14 @@ app.post('/api/locations', authenticateToken, (req, res) => {
 
 // Update location (Protected)
 app.put('/api/locations/:id', authenticateToken, (req, res) => {
-    const { name, status, lat, lng, notes, date, imageUrl } = req.body;
+    const { name, status, lat, lng, notes, date, imageUrl, houseNumber, address } = req.body;
     const { id } = req.params;
     
-    db.run(`UPDATE locations SET name = ?, status = ?, lat = ?, lng = ?, notes = ?, date = ?, imageUrl = ? WHERE id = ?`,
-        [name, status, lat, lng, notes, date, imageUrl, id],
+    db.run(`UPDATE locations SET name = ?, status = ?, lat = ?, lng = ?, notes = ?, date = ?, imageUrl = ?, houseNumber = ?, address = ? WHERE id = ?`,
+        [name, status, lat, lng, notes, date, imageUrl, houseNumber, address, id],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
-            const updatedLoc = { id, name, status, lat, lng, notes, date, imageUrl };
+            const updatedLoc = { id, name, status, lat, lng, notes, date, imageUrl, houseNumber, address };
             io.emit('locationUpdated', updatedLoc);
             res.json({ success: true, message: "อัปเดตข้อมูลสำเร็จ" });
         }
@@ -235,9 +223,9 @@ app.post('/api/locations/import', authenticateToken, (req, res) => {
         // Delete old locations to replace with new import
         db.run("DELETE FROM locations");
         
-        const stmt = db.prepare("INSERT INTO locations (id, name, status, lat, lng, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        const stmt = db.prepare("INSERT INTO locations (id, name, status, lat, lng, notes, date, imageUrl, houseNumber, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         locations.forEach(item => {
-            stmt.run(item.id, item.name, item.status, item.lat, item.lng, item.notes, item.date);
+            stmt.run(item.id, item.name, item.status, item.lat, item.lng, item.notes, item.date, item.imageUrl || null, item.houseNumber || '', item.address || '');
         });
         stmt.finalize();
         
@@ -306,7 +294,18 @@ app.get('/api/geocode', async (req, res) => {
             
             if (data.results && data.results.length > 0) {
                 // Get the most specific address (usually the first one)
-                return res.json({ address: data.results[0].formatted_address, source: 'google' });
+                const result = data.results[0];
+                const streetNumber = result.address_components?.find(component =>
+                    component.types.includes('street_number') ||
+                    component.types.includes('subpremise') ||
+                    component.types.includes('premise')
+                );
+                const numberFromText = result.formatted_address.match(/(?:^|เลขที่\s+)(\d+(?:\/\d+)?)/);
+                return res.json({
+                    address: result.formatted_address,
+                    houseNumber: streetNumber?.long_name || numberFromText?.[1] || '',
+                    source: 'google'
+                });
             }
             return res.json({ address: "ไม่พบที่อยู่", source: 'google' });
         } else {
@@ -315,7 +314,12 @@ app.get('/api/geocode', async (req, res) => {
             const data = await response.json();
             
             if (data && data.display_name) {
-                return res.json({ address: data.display_name, source: 'osm' });
+                const numberFromText = data.display_name.match(/(?:^|เลขที่\s+)(\d+(?:\/\d+)?)/);
+                return res.json({
+                    address: data.display_name,
+                    houseNumber: data.address?.house_number || numberFromText?.[1] || '',
+                    source: 'osm'
+                });
             }
             return res.json({ address: "ไม่พบที่อยู่", source: 'osm' });
         }

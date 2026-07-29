@@ -20,6 +20,14 @@ const TILE_URLS = {
 };
 const ATTRIBUTION = '&copy; <a href="https://maps.google.com">Google Maps</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
+const formatFullAddress = (point) => {
+    const houseNumber = (point.houseNumber || '').trim();
+    const address = (point.address || '').trim();
+    if (!houseNumber) return address;
+    if (address.toLowerCase().startsWith(houseNumber.toLowerCase())) return address;
+    return `${houseNumber} ${address}`.trim();
+};
+
 // ---------------------------------------------------------------------------
 // LOGIN COMPONENT
 // ---------------------------------------------------------------------------
@@ -179,7 +187,8 @@ function App() {
 
     // Form modal
     const [isFormOpen, setIsFormOpen] = useState(false);
-    const [formPoint, setFormPoint] = useState({ id: null, name: '', status: 'pending', lat: null, lng: null, notes: '', date: '', imageUrl: null });
+    const [formPoint, setFormPoint] = useState({ id: null, name: '', houseNumber: '', address: '', status: 'pending', lat: null, lng: null, notes: '', date: '', imageUrl: null });
+    const [isSaving, setIsSaving] = useState(false);
     
     // Pro Features States
     const [selectedPhoto, setSelectedPhoto] = useState(null);
@@ -360,7 +369,7 @@ function App() {
                 // Just update lat/lng if form is already open
                 setFormPoint(prev => ({ ...prev, lat, lng }));
             } else {
-                setFormPoint({ id: '', name: 'กำลังค้นหาที่อยู่...', status: 'surveyed', lat, lng, notes: '', date: new Date().toISOString().split('T')[0] });
+                setFormPoint({ id: '', name: '', houseNumber: '', address: 'กำลังค้นหาที่อยู่...', status: 'surveyed', lat, lng, notes: '', date: new Date().toISOString().split('T')[0] });
                 setIsFormOpen(true);
             }
 
@@ -370,23 +379,16 @@ function App() {
                 const data = await res.json();
                 
                 if (data.address && data.address !== 'ไม่พบที่อยู่') {
-                    setFormPoint(prev => {
-                        // Only auto-fill if the name is empty or still loading
-                        if (prev.name === 'กำลังค้นหาที่อยู่...' || !prev.name) {
-                            return { ...prev, name: data.address };
-                        }
-                        // If name is already filled, append to notes if not already there
-                        if (!prev.notes.includes(data.address)) {
-                            const newNotes = prev.notes ? prev.notes + '\nที่อยู่: ' + data.address : 'ที่อยู่: ' + data.address;
-                            return { ...prev, notes: newNotes };
-                        }
-                        return prev;
-                    });
+                    setFormPoint(prev => ({
+                        ...prev,
+                        address: data.address,
+                        houseNumber: data.houseNumber || prev.houseNumber || ''
+                    }));
                 } else {
-                    setFormPoint(prev => prev.name === 'กำลังค้นหาที่อยู่...' ? { ...prev, name: '' } : prev);
+                    setFormPoint(prev => prev.address === 'กำลังค้นหาที่อยู่...' ? { ...prev, address: '' } : prev);
                 }
             } catch (err) {
-                setFormPoint(prev => prev.name === 'กำลังค้นหาที่อยู่...' ? { ...prev, name: '' } : prev);
+                setFormPoint(prev => prev.address === 'กำลังค้นหาที่อยู่...' ? { ...prev, address: '' } : prev);
                 console.error("Geocode fetch error:", err);
             }
         });
@@ -474,7 +476,12 @@ function App() {
             if (activeFilter !== 'all' && p.status !== activeFilter) return false;
             if (searchText.trim()) {
                 const q = searchText.toLowerCase();
-                if (!(p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q)))) return false;
+                if (!(
+                    p.name.toLowerCase().includes(q) ||
+                    (p.houseNumber && p.houseNumber.toLowerCase().includes(q)) ||
+                    (p.address && p.address.toLowerCase().includes(q)) ||
+                    (p.notes && p.notes.toLowerCase().includes(q))
+                )) return false;
             }
             if (filterRadius > 0 && userLocationRef.current && mapRef.current) {
                 const dist = mapRef.current.distance(userLocationRef.current, [p.lat, p.lng]);
@@ -530,9 +537,19 @@ function App() {
 
             marker.on('dragend', async (e) => {
                 const newPos = e.target.getLatLng();
-                const payload = { ...point, lat: newPos.lat, lng: newPos.lng };
+                let automaticAddress = { houseNumber: '', address: point.address || '' };
                 
                 try {
+                    const geocodeRes = await fetch(`${API_URL}/geocode?lat=${newPos.lat}&lng=${newPos.lng}`);
+                    if (geocodeRes.ok) automaticAddress = await geocodeRes.json();
+
+                    const payload = {
+                        ...point,
+                        lat: newPos.lat,
+                        lng: newPos.lng,
+                        houseNumber: automaticAddress.houseNumber || '',
+                        address: automaticAddress.address || point.address || ''
+                    };
                     const res = await fetch(`${API_URL}/locations/${point.id}`, {
                         method: 'PUT',
                         headers: { 
@@ -570,6 +587,7 @@ function App() {
                         <span class="popup-title">${point.name}</span>
                         <span class="badge ${badgeClass}">${statusLabel}</span>
                     </div>
+                    ${formatFullAddress(point) ? `<p class="popup-desc"><strong>${point.houseNumber ? 'บ้านเลขที่' : 'ที่อยู่'}:</strong> ${formatFullAddress(point)}</p>` : ''}
                     <p class="popup-desc">${point.notes || 'ไม่มีบันทึกเพิ่มเติม'}</p>
                     <div class="popup-meta">
                         <span><i class="fa-solid fa-calendar-days"></i> ${point.date || '-'}</span>
@@ -692,11 +710,11 @@ function App() {
     
     const exportToCSV = () => {
         if (surveyPoints.length === 0) return Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ส่งออก', 'info');
-        const headers = ['ID', 'ชื่อจุดสำรวจ', 'สถานะ', 'ละติจูด', 'ลองจิจูด', 'บันทึก', 'วันที่'];
+        const headers = ['ID', 'ชื่อจุดสำรวจ', 'บ้านเลขที่', 'ที่อยู่', 'สถานะ', 'ละติจูด', 'ลองจิจูด', 'บันทึก', 'วันที่'];
         const csvContent = [
             headers.join(','),
             ...surveyPoints.map(p => 
-                `"${p.id}","${p.name}","${p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}","${p.lat}","${p.lng}","${p.notes ? p.notes.replace(/\n/g, ' ') : ''}","${p.date}"`
+                `"${p.id}","${p.name}","${p.houseNumber || ''}","${(p.address || '').replace(/"/g, '""')}","${p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}","${p.lat}","${p.lng}","${p.notes ? p.notes.replace(/\n/g, ' ') : ''}","${p.date}"`
             )
         ].join('\n');
         
@@ -724,18 +742,20 @@ function App() {
             const p = surveyPoints.find(p => p.id === id);
             if (p) { setFormPoint({ ...p }); setIsFormOpen(true); }
         } else {
-            setFormPoint({ id: '', name: '', status: 'surveyed', lat: lat ?? NONG_KHAEM_CENTER[0], lng: lng ?? NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
+            setFormPoint({ id: '', name: '', houseNumber: '', address: '', status: 'surveyed', lat: lat ?? NONG_KHAEM_CENTER[0], lng: lng ?? NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
             setIsFormOpen(true);
         }
     };
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
+        if (isSaving) return;
         if (!formPoint.name.trim()) { 
             Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'กรุณากรอกชื่อสถานที่สำรวจ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
             return; 
         }
         
+        setIsSaving(true);
         try {
             const isUpdate = !!formPoint.id;
             const method = isUpdate ? 'PUT' : 'POST';
@@ -759,8 +779,31 @@ function App() {
                 }
             }
 
+            let automaticAddress = {
+                houseNumber: (formPoint.houseNumber || '').trim(),
+                address: (formPoint.address || '').trim()
+            };
+            if (formPoint.lat != null && formPoint.lng != null && !automaticAddress.houseNumber) {
+                const geocodeRes = await fetch(`${API_URL}/geocode?lat=${formPoint.lat}&lng=${formPoint.lng}`);
+                if (geocodeRes.ok) {
+                    const geocodeData = await geocodeRes.json();
+                    automaticAddress = {
+                        houseNumber: geocodeData.houseNumber || '',
+                        address: geocodeData.address || automaticAddress.address
+                    };
+                }
+            }
+
             const payloadId = isUpdate ? formPoint.id : 'point-' + Date.now();
-            const payload = { ...formPoint, id: payloadId, name: formPoint.name.trim(), notes: formPoint.notes.trim(), imageUrl: finalImageUrl };
+            const payload = {
+                ...formPoint,
+                id: payloadId,
+                name: formPoint.name.trim(),
+                houseNumber: automaticAddress.houseNumber,
+                address: automaticAddress.address,
+                notes: formPoint.notes.trim(),
+                imageUrl: finalImageUrl
+            };
 
             const res = await fetch(endpoint, {
                 method,
@@ -777,11 +820,11 @@ function App() {
             }
 
             if (res.ok) {
-                if (isUpdate) {
-                    setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
-                } else {
-                    setSurveyPoints(prev => [...prev, payload]);
-                }
+                // Upsert because the same record can arrive through WebSocket first.
+                setSurveyPoints(prev => prev.some(p => p.id === payload.id)
+                    ? prev.map(p => p.id === payload.id ? payload : p)
+                    : [...prev, payload]
+                );
                 Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'บันทึกข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false, background: 'var(--card-bg)', color: 'var(--text-primary)' });
                 setIsFormOpen(false);
             } else {
@@ -789,6 +832,8 @@ function App() {
             }
         } catch (err) {
             Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `บันทึกข้อมูลล้มเหลว: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -878,7 +923,7 @@ function App() {
         return () => clearTimeout(delaySearch);
     }, [searchText]);
 
-    const handleSearchItemClick = (item) => {
+    const handleSearchItemClick = async (item) => {
         const lat = parseFloat(item.lat);
         const lng = parseFloat(item.lon);
         const shortName = item.name || item.display_name.split(',')[0];
@@ -896,8 +941,23 @@ function App() {
 
         mapRef.current.flyTo([lat, lng], 18, { duration: 1.5 });
         
+        let geocoded = { houseNumber: '', address: item.display_name || '' };
+        try {
+            const res = await fetch(`${API_URL}/geocode?lat=${lat}&lng=${lng}`);
+            if (res.ok) geocoded = await res.json();
+        } catch (err) {
+            console.error("Geocode search result error:", err);
+        }
+
         setTimeout(() => {
-            setFormPoint(p => ({ ...p, lat, lng, name: shortName }));
+            setFormPoint(p => ({
+                ...p,
+                lat,
+                lng,
+                name: shortName,
+                houseNumber: geocoded.houseNumber || '',
+                address: geocoded.address || item.display_name || ''
+            }));
             setIsFormOpen(true);
             setTimeout(() => {
                 const nameInput = document.getElementById('name');
@@ -923,10 +983,12 @@ function App() {
     // EXPORT / IMPORT (Backend connected)
     // ---------------------------------------------------------------------------
     const exportData = () => {
-        const headers = ["ID", "ชื่อสถานที่/บ้านเลขที่", "สถานะ", "ละติจูด", "ลองจิจูด", "บันทึกเพิ่มเติม", "วันที่"];
+        const headers = ["ID", "ชื่อสถานที่", "บ้านเลขที่", "ที่อยู่", "สถานะ", "ละติจูด", "ลองจิจูด", "บันทึกเพิ่มเติม", "วันที่"];
         const rows = surveyPoints.map(p => [
             p.id,
             `"${(p.name || '').replace(/"/g, '""')}"`,
+            `"${(p.houseNumber || '').replace(/"/g, '""')}"`,
+            `"${(p.address || '').replace(/"/g, '""')}"`,
             p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ',
             p.lat,
             p.lng,
@@ -988,6 +1050,10 @@ function App() {
                 <h2 style="font-size: 22px; font-weight: 600; margin: 0 0 16px; color: #1f2937;">${point.name}</h2>
                 
                 <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #4b5563;">บ้านเลขที่/ที่อยู่:</td>
+                        <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #111827;">${formatFullAddress(point) || '-'}</td>
+                    </tr>
                     <tr>
                         <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; width: 150px; font-weight: bold; color: #4b5563;">วันที่ลงพื้นที่:</td>
                         <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; color: #111827;">${point.date || '-'}</td>
@@ -1172,7 +1238,10 @@ function App() {
         if (activeFilter !== 'all' && p.status !== activeFilter) return false;
         if (searchText.trim()) {
             const q = searchText.toLowerCase();
-            return p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q));
+            return p.name.toLowerCase().includes(q) ||
+                (p.houseNumber && p.houseNumber.toLowerCase().includes(q)) ||
+                (p.address && p.address.toLowerCase().includes(q)) ||
+                (p.notes && p.notes.toLowerCase().includes(q));
         }
         return true;
     }).sort((a, b) => {
@@ -1511,6 +1580,12 @@ function App() {
                                             <span className={`badge ${badgeClass}`}>{statusLabel}</span>
                                         </div>
                                         <div className="item-details">
+                                            {formatFullAddress(point) && (
+                                                <p>
+                                                    <strong>{point.houseNumber ? 'บ้านเลขที่:' : 'ที่อยู่:'}</strong>{' '}
+                                                    {formatFullAddress(point).length > 100 ? formatFullAddress(point).substring(0, 97) + '...' : formatFullAddress(point)}
+                                                </p>
+                                            )}
                                             <p>{point.notes ? (point.notes.length > 55 ? point.notes.substring(0, 52) + '...' : point.notes) : 'ไม่มีบันทึกเพิ่มเติม'}</p>
                                             <div className="item-meta">
                                                 <span><i className="fa-solid fa-calendar-day"></i> {point.date || '-'}</span>
@@ -1585,6 +1660,16 @@ function App() {
                                 <label>ชื่อจุดสำรวจ / สถานที่ *</label>
                                 <input type="text" value={formPoint.name} onChange={e => setFormPoint(p => ({ ...p, name: e.target.value }))} placeholder="เช่น โรงเรียนวัดหนองแขม, หน้าตลาด..." maxLength="80" required />
                             </div>
+                            <div className="form-row">
+                                <div className="form-group col">
+                                    <label>บ้านเลขที่</label>
+                                    <input type="text" value={formPoint.houseNumber || ''} onChange={e => setFormPoint(p => ({ ...p, houseNumber: e.target.value }))} placeholder="ค้นหาอัตโนมัติจากพิกัด (แก้ไขได้)" maxLength="30" />
+                                </div>
+                                <div className="form-group col">
+                                    <label>ที่อยู่จริง</label>
+                                    <input type="text" value={formPoint.address || ''} onChange={e => setFormPoint(p => ({ ...p, address: e.target.value }))} placeholder="ระบบจะค้นหาจากพิกัดให้อัตโนมัติ" maxLength="300" />
+                                </div>
+                            </div>
                             <div className="form-group">
                                 <label>สถานะการสำรวจ *</label>
                                 <div className="status-radio-group">
@@ -1650,7 +1735,9 @@ function App() {
                             </div>
                             <div className="modal-actions">
                                 <button type="button" className="btn btn-secondary" onClick={() => setIsFormOpen(false)}>ยกเลิก</button>
-                                <button type="submit" className="btn btn-primary">บันทึกข้อมูล</button>
+                                <button type="submit" className="btn btn-primary" disabled={isSaving}>
+                                    {isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูล'}
+                                </button>
                             </div>
                         </form>
                     </div>
