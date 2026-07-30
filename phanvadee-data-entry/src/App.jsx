@@ -36,7 +36,7 @@ function LoginScreen({ onLogin }) {
         setLoading(true);
 
         const endpoint = isRegisterMode ? `${API_URL}/register` : `${API_URL}/login`;
-        
+
         try {
             const res = await fetch(endpoint, {
                 method: 'POST',
@@ -44,7 +44,7 @@ function LoginScreen({ onLogin }) {
                 body: JSON.stringify({ username, password })
             });
             const data = await res.json();
-            
+
             if (data.success) {
                 if (isRegisterMode) {
                     Swal.fire({
@@ -78,7 +78,7 @@ function LoginScreen({ onLogin }) {
                 </div>
                 <h2>{isRegisterMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}</h2>
                 <p>Nong Khaem Survey Map</p>
-                
+
                 {error && (
                     <div className="login-error">
                         <i className="fa-solid fa-triangle-exclamation"></i>
@@ -88,32 +88,32 @@ function LoginScreen({ onLogin }) {
 
                 <form className="login-form" onSubmit={handleSubmit}>
                     <div className="form-group">
-                        <input 
-                            type="text" 
-                            placeholder="ชื่อผู้ใช้งาน" 
+                        <input
+                            type="text"
+                            placeholder="ชื่อผู้ใช้งาน"
                             value={username}
                             onChange={(e) => { setUsername(e.target.value); setError(''); }}
-                            required 
+                            required
                         />
                     </div>
                     <div className="form-group">
-                        <input 
-                            type="password" 
-                            placeholder="รหัสผ่าน" 
+                        <input
+                            type="password"
+                            placeholder="รหัสผ่าน"
                             value={password}
                             onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                            required 
+                            required
                         />
                     </div>
                     <button type="submit" className="login-btn" disabled={loading}>
                         {loading ? <i className="fa-solid fa-spinner fa-spin"></i> : (isRegisterMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ')}
                     </button>
                 </form>
-                
+
                 <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {isRegisterMode ? 'มีบัญชีอยู่แล้ว?' : 'ยังไม่มีบัญชี?'} 
-                    <button 
-                        type="button" 
+                    {isRegisterMode ? 'มีบัญชีอยู่แล้ว?' : 'ยังไม่มีบัญชี?'}
+                    <button
+                        type="button"
                         onClick={() => { setIsRegisterMode(!isRegisterMode); setError(''); }}
                         style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', marginLeft: 6, fontWeight: 600 }}
                     >
@@ -136,7 +136,7 @@ function App() {
     const [authToken, setAuthToken] = useState(() => localStorage.getItem("nongkhaem_token") || null);
     const [authUser, setAuthUser] = useState(() => {
         const saved = localStorage.getItem("nongkhaem_user");
-        if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+        if (saved) { try { return JSON.parse(saved); } catch (e) { } }
         return null;
     });
     const isAuthenticated = !!authUser && !!authToken;
@@ -180,12 +180,12 @@ function App() {
     // Form modal
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [formPoint, setFormPoint] = useState({ id: null, name: '', status: 'pending', lat: null, lng: null, notes: '', date: '', imageUrl: null });
-    
+
     // Pro Features States
     const [selectedPhoto, setSelectedPhoto] = useState(null);
     const [photoPreview, setPhotoPreview] = useState(null);
     const [isDashboardOpen, setIsDashboardOpen] = useState(false);
-    
+
     // Enterprise Features States
     const [weather, setWeather] = useState(null);
     const [isHeatmapMode, setIsHeatmapMode] = useState(false);
@@ -193,7 +193,7 @@ function App() {
     const [filterRadius, setFilterRadius] = useState(0);
 
     const isFormOpenRef = useRef(isFormOpen);
-    
+
     useEffect(() => {
         isFormOpenRef.current = isFormOpen;
     }, [isFormOpen]);
@@ -222,7 +222,7 @@ function App() {
     const userMarkerRef = useRef(null);
 
     // --- Effects ---
-    
+
     // Fetch Weather Data
     useEffect(() => {
         const fetchWeather = async () => {
@@ -295,8 +295,8 @@ function App() {
         document.body.className = theme;
         localStorage.setItem("survey_map_theme", theme);
         if (tileLayerRef.current) {
-            const tileUrl = isSatellite 
-                ? TILE_URLS.satellite 
+            const tileUrl = isSatellite
+                ? TILE_URLS.satellite
                 : (theme === 'dark-theme' ? TILE_URLS.dark : TILE_URLS.light);
             tileLayerRef.current.setUrl(tileUrl);
         }
@@ -368,7 +368,7 @@ function App() {
             try {
                 const res = await fetch(`${API_URL}/geocode?lat=${lat}&lng=${lng}`);
                 const data = await res.json();
-                
+
                 if (data.address && data.address !== 'ไม่พบที่อยู่') {
                     setFormPoint(prev => {
                         // Only auto-fill if the name is empty or still loading
@@ -404,12 +404,12 @@ function App() {
                 });
                 const userMarker = L.marker(latlng, { icon: userIcon, zIndexOffset: 1000, draggable: true }).addTo(map).bindPopup("ตำแหน่งปัจจุบัน (ลากเพื่อเปลี่ยนจุดเริ่มต้น)");
                 userMarkerRef.current = userMarker;
-                
+
                 userMarker.on('dragend', (e) => {
                     const newPos = e.target.getLatLng();
                     userLocationRef.current = [newPos.lat, newPos.lng];
                 });
-            }, () => {});
+            }, () => { });
         }
 
         // Add mouse move listener for high-performance coordinate display
@@ -420,8 +420,8 @@ function App() {
             }
         });
 
-        return () => { 
-            map.remove(); 
+        return () => {
+            map.remove();
             mapRef.current = null;
             markerClusterGroupRef.current = null;
         };
@@ -462,164 +462,6 @@ function App() {
         };
     }, [isFollowing]);
 
-    // Render markers
-    useEffect(() => {
-        if (!mapRef.current || !markerClusterGroupRef.current) return;
-        
-        // Remove existing markers from cluster group
-        markerClusterGroupRef.current.clearLayers();
-        markersRef.current = {};
-
-        const filtered = surveyPoints.filter(p => {
-            if (activeFilter !== 'all' && p.status !== activeFilter) return false;
-            if (searchText.trim()) {
-                const q = searchText.toLowerCase();
-                if (!(p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q)))) return false;
-            }
-            if (filterRadius > 0 && userLocationRef.current && mapRef.current) {
-                const dist = mapRef.current.distance(userLocationRef.current, [p.lat, p.lng]);
-                if (dist > filterRadius) return false;
-            }
-            return true;
-        });
-
-        // Heatmap Logic
-        if (isHeatmapMode) {
-            if (mapRef.current.hasLayer(markerClusterGroupRef.current)) {
-                mapRef.current.removeLayer(markerClusterGroupRef.current);
-            }
-            if (heatLayerRef.current) {
-                mapRef.current.removeLayer(heatLayerRef.current);
-            }
-            
-            const heatPoints = filtered.map(p => [p.lat, p.lng, 1.0]);
-            
-            if (window.L && window.L.heatLayer) {
-                heatLayerRef.current = L.heatLayer(heatPoints, {
-                    radius: 25,
-                    blur: 15,
-                    maxZoom: 15,
-                    gradient: { 0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red' }
-                }).addTo(mapRef.current);
-            }
-            return; // Skip normal marker rendering in heatmap mode
-        } else {
-            if (heatLayerRef.current && mapRef.current.hasLayer(heatLayerRef.current)) {
-                mapRef.current.removeLayer(heatLayerRef.current);
-            }
-            if (!mapRef.current.hasLayer(markerClusterGroupRef.current)) {
-                mapRef.current.addLayer(markerClusterGroupRef.current);
-            }
-        }
-
-        filtered.forEach(point => {
-            const sc = point.status === 'surveyed' ? 'surveyed' : 'pending';
-            const iconHtml = point.status === 'surveyed'
-                ? '<i class="fa-solid fa-check"></i>'
-                : '<i class="fa-solid fa-triangle-exclamation"></i>';
-
-            const icon = L.divIcon({
-                className: 'custom-map-marker',
-                html: `<div class="marker-pin ${sc}">${iconHtml}</div>`,
-                iconSize: [30, 42], iconAnchor: [15, 48], popupAnchor: [0, -42]
-            });
-
-            const marker = L.marker([point.lat, point.lng], { icon, draggable: true });
-            const statusLabel = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ';
-            const badgeClass = point.status === 'surveyed' ? 'surveyed' : 'pending';
-
-            marker.on('dragend', async (e) => {
-                const newPos = e.target.getLatLng();
-                const payload = { ...point, lat: newPos.lat, lng: newPos.lng };
-                
-                try {
-                    const res = await fetch(`${API_URL}/locations/${point.id}`, {
-                        method: 'PUT',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${authToken}`
-                        },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    if (res.status === 401 || res.status === 403) {
-                        Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                        return handleLogout();
-                    }
-
-                    if (res.ok) {
-                        setSurveyPoints(prev => prev.map(p => p.id === point.id ? payload : p));
-                    } else {
-                        marker.setLatLng([point.lat, point.lng]);
-                        Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'อัปเดตตำแหน่งล้มเหลว', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                    }
-                } catch (err) {
-                    marker.setLatLng([point.lat, point.lng]);
-                    console.error("Error updating marker position:", err);
-                }
-            });
-
-            const imageHtml = point.imageUrl 
-                ? `<div class="popup-image" style="width: 100%; height: 120px; overflow: hidden; border-radius: 6px; margin-bottom: 8px;"><img src="${API_URL.replace('/api', '')}${point.imageUrl}" style="width: 100%; height: 100%; object-fit: cover;" /></div>`
-                : '';
-
-            marker.bindPopup(`
-                <div class="popup-container">
-                    ${imageHtml}
-                    <div class="popup-header">
-                        <span class="popup-title">${point.name}</span>
-                        <span class="badge ${badgeClass}">${statusLabel}</span>
-                    </div>
-                    <p class="popup-desc">${point.notes || 'ไม่มีบันทึกเพิ่มเติม'}</p>
-                    <div class="popup-meta">
-                        <span><i class="fa-solid fa-calendar-days"></i> ${point.date || '-'}</span>
-                        <span><i class="fa-solid fa-location-crosshairs"></i> ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}</span>
-                    </div>
-                    <div class="popup-actions" style="flex-wrap: wrap;">
-                        <button class="popup-btn primary popup-nav-btn" data-lat="${point.lat}" data-lng="${point.lng}" data-name="${point.name.replace(/"/g,'&quot;')}">
-                            <i class="fa-solid fa-route"></i> นำทาง
-                        </button>
-                        <a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}" target="_blank" class="popup-btn" style="background: var(--bg-hover); color: var(--text-primary); text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 10px; border-radius: 6px;">
-                            <i class="fa-solid fa-street-view"></i> Street View
-                        </a>
-                        <button class="popup-btn popup-pdf-btn" data-id="${point.id}" style="background: var(--bg-hover); color: var(--text-primary);">
-                            <i class="fa-solid fa-file-pdf text-red"></i> PDF
-                        </button>
-                        <button class="popup-btn popup-edit-btn" data-id="${point.id}">
-                            <i class="fa-solid fa-pen-to-square"></i> แก้ไข
-                        </button>
-                        <button class="popup-btn popup-del-btn" data-id="${point.id}">
-                            <i class="fa-solid fa-trash-can"></i> ลบ
-                        </button>
-                    </div>
-                </div>
-            `);
-
-            // Add to cluster group instead of map directly
-            markerClusterGroupRef.current.addLayer(marker);
-            markersRef.current[point.id] = marker;
-        });
-
-        const onPopupOpen = (e) => {
-            const el = e.popup.getElement();
-            if (!el) return;
-            const navBtn = el.querySelector('.popup-nav-btn');
-            const pdfBtn = el.querySelector('.popup-pdf-btn');
-            const editBtn = el.querySelector('.popup-edit-btn');
-            const delBtn = el.querySelector('.popup-del-btn');
-            if (navBtn) navBtn.onclick = () => startNavigation(parseFloat(navBtn.dataset.lat), parseFloat(navBtn.dataset.lng), navBtn.dataset.name);
-            if (pdfBtn) pdfBtn.onclick = () => exportToPDF(pdfBtn.dataset.id);
-            if (editBtn) editBtn.onclick = () => openSurveyForm(editBtn.dataset.id);
-            if (delBtn) delBtn.onclick = () => deleteSurveyPoint(delBtn.dataset.id);
-        };
-
-        mapRef.current.on('popupopen', onPopupOpen);
-        return () => { if (mapRef.current) mapRef.current.off('popupopen', onPopupOpen); };
-    }, [surveyPoints, activeFilter, searchText, isHeatmapMode, isAuthenticated, isDataLoaded]);
-
-    // ---------------------------------------------------------------------------
-    // NAVIGATION (OSRM)
-    // ---------------------------------------------------------------------------
     const startNavigation = (destLat, destLng, destName) => {
         if (!mapRef.current) return;
         const startLatLng = userLocationRef.current || NONG_KHAEM_CENTER;
@@ -662,7 +504,7 @@ function App() {
                 else if (txt.includes("right")) icon = "fa-solid fa-arrow-right";
                 else if (txt.includes("roundabout")) icon = "fa-solid fa-circle-notch";
                 else if (txt.includes("destination")) icon = "fa-solid fa-circle-dot text-green";
-                const distStr = step.distance >= 1000 ? `${(step.distance/1000).toFixed(1)} กม.` : `${Math.round(step.distance)} ม.`;
+                const distStr = step.distance >= 1000 ? `${(step.distance / 1000).toFixed(1)} กม.` : `${Math.round(step.distance)} ม.`;
                 steps.push({ icon, text: txt, dist: distStr });
             });
             setRouteInstructions(steps);
@@ -675,275 +517,6 @@ function App() {
         });
     };
 
-    const cancelNavigation = () => {
-        if (routingControlRef.current && mapRef.current) { 
-            mapRef.current.removeControl(routingControlRef.current); 
-            routingControlRef.current = null; 
-        }
-        setNavActive(false);
-        setRouteSummary('');
-        setRouteInstructions([]);
-        if (mapRef.current) mapRef.current.setView(NONG_KHAEM_CENTER, 14);
-    };
-
-    // ---------------------------------------------------------------------------
-    // CRUD (Connected to Backend)
-    // ---------------------------------------------------------------------------
-    
-    const exportToCSV = () => {
-        if (surveyPoints.length === 0) return Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ส่งออก', 'info');
-        const headers = ['ID', 'ชื่อจุดสำรวจ', 'สถานะ', 'ละติจูด', 'ลองจิจูด', 'บันทึก', 'วันที่'];
-        const csvContent = [
-            headers.join(','),
-            ...surveyPoints.map(p => 
-                `"${p.id}","${p.name}","${p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}","${p.lat}","${p.lng}","${p.notes ? p.notes.replace(/\n/g, ' ') : ''}","${p.date}"`
-            )
-        ].join('\n');
-        
-        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `survey_data_${new Date().toISOString().split('T')[0]}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
-
-    // ---------------------------------------------------------------------------
-    // ---------------------------------------------------------------------------
-    const openSurveyForm = (id = null, lat = null, lng = null) => {
-        if (!isAuthenticated) {
-            Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มหรือแก้ไขจุดสำรวจได้', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-            return;
-        }
-
-        setSelectedPhoto(null);
-        setPhotoPreview(null);
-        if (id && id !== 'new') {
-            const p = surveyPoints.find(p => p.id === id);
-            if (p) { setFormPoint({ ...p }); setIsFormOpen(true); }
-        } else {
-            setFormPoint({ id: '', name: '', status: 'surveyed', lat: lat ?? NONG_KHAEM_CENTER[0], lng: lng ?? NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
-            setIsFormOpen(true);
-        }
-    };
-
-    const handleFormSubmit = async (e) => {
-        e.preventDefault();
-        if (!formPoint.name.trim()) { 
-            Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'กรุณากรอกชื่อสถานที่สำรวจ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-            return; 
-        }
-        
-        try {
-            const isUpdate = !!formPoint.id;
-            const method = isUpdate ? 'PUT' : 'POST';
-            const endpoint = isUpdate ? `${API_URL}/locations/${formPoint.id}` : `${API_URL}/locations`;
-            
-            let finalImageUrl = formPoint.imageUrl || null;
-            if (selectedPhoto) {
-                const formData = new FormData();
-                formData.append('photo', selectedPhoto);
-                const uploadRes = await fetch(`${API_URL}/upload`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${authToken}` },
-                    body: formData
-                });
-                if (uploadRes.ok) {
-                    const uploadData = await uploadRes.json();
-                    finalImageUrl = uploadData.imageUrl;
-                } else {
-                    Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'อัปโหลดรูปภาพไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                    return;
-                }
-            }
-
-            const payloadId = isUpdate ? formPoint.id : 'point-' + Date.now();
-            const payload = { ...formPoint, id: payloadId, name: formPoint.name.trim(), notes: formPoint.notes.trim(), imageUrl: finalImageUrl };
-
-            const res = await fetch(endpoint, {
-                method,
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (res.status === 401 || res.status === 403) {
-                Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                return handleLogout();
-            }
-
-            if (res.ok) {
-                if (isUpdate) {
-                    setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
-                } else {
-                    setSurveyPoints(prev => [...prev, payload]);
-                }
-                Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'บันทึกข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false, background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                setIsFormOpen(false);
-            } else {
-                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'บันทึกข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-            }
-        } catch (err) {
-            Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `บันทึกข้อมูลล้มเหลว: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
-        }
-    };
-
-    const deleteSurveyPoint = async (id) => {
-        const result = await Swal.fire({
-            title: 'ยืนยันการลบ?',
-            text: "ต้องการลบจุดสำรวจนี้ใช่หรือไม่?",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#ef4444',
-            cancelButtonColor: '#6b7280',
-            confirmButtonText: 'ใช่, ลบเลย!',
-            cancelButtonText: 'ยกเลิก',
-            background: 'var(--card-bg)',
-            color: 'var(--text-primary)'
-        });
-        
-        if (result.isConfirmed) {
-            try {
-                const res = await fetch(`${API_URL}/locations/${id}`, { 
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                if (res.status === 401 || res.status === 403) {
-                    Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                    return handleLogout();
-                }
-
-                if (res.ok) {
-                    setSurveyPoints(prev => prev.filter(p => p.id !== id));
-                    cancelNavigation();
-                    Swal.fire({ icon: 'success', title: 'ลบสำเร็จ', showConfirmButton: false, timer: 1500, background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                } else {
-                    Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'ลบข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                }
-            } catch (err) {
-                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
-            }
-        }
-    };
-
-    // ---------------------------------------------------------------------------
-    // NOMINATIM SEARCH
-    // ---------------------------------------------------------------------------
-    const searchOnline = async () => {
-        const query = searchText.trim();
-        if (!query) { setOnlineResults([]); return; }
-        setIsSearchingOnline(true);
-        try {
-            // Force scope to Nong Khaem / Nong Khang Phlu if user didn't specify
-            let scopedQuery = query;
-            if (!scopedQuery.includes('หนองแขม') && !scopedQuery.includes('หนองค้างพลู')) {
-                scopedQuery += ' เขตหนองแขม';
-            }
-
-            // Use ArcGIS for best Thai coverage without API keys
-            const bias = `&location=100.3582,13.7056&distance=8000&outFields=*`;
-            const res = await fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(scopedQuery)}&f=json&maxLocations=10${bias}`);
-            const data = await res.json();
-            
-            if (data.candidates && data.candidates.length > 0) {
-                const mappedResults = data.candidates.map(item => ({
-                    display_name: item.attributes?.LongLabel || item.address,
-                    name: item.address,
-                    lat: item.location.y,
-                    lon: item.location.x,
-                    source: 'arcgis'
-                }));
-                setOnlineResults(mappedResults.slice(0, 5));
-            } else {
-                setOnlineResults([]);
-            }
-        } catch (err) { setOnlineResults([]); }
-        finally { setIsSearchingOnline(false); }
-    };
-
-    // Auto-search when user types
-    useEffect(() => {
-        const delaySearch = setTimeout(() => {
-            if (searchText.trim().length > 1) {
-                searchOnline();
-            } else if (searchText.trim().length === 0) {
-                setOnlineResults([]);
-            }
-        }, 800);
-        return () => clearTimeout(delaySearch);
-    }, [searchText]);
-
-    const handleSearchItemClick = (item) => {
-        const lat = parseFloat(item.lat);
-        const lng = parseFloat(item.lon);
-        const shortName = item.name || item.display_name.split(',')[0];
-
-        if (searchMarkerRef.current) mapRef.current.removeLayer(searchMarkerRef.current);
-
-        const icon = L.divIcon({
-            className: 'custom-map-marker',
-            html: `<div class="marker-pin" style="background:#3b82f6;"><i class="fa-solid fa-star"></i></div>`,
-            iconSize: [30, 42], iconAnchor: [15, 48], popupAnchor: [0, -42]
-        });
-
-        const marker = L.marker([lat, lng], { icon }).addTo(mapRef.current);
-        searchMarkerRef.current = marker;
-
-        mapRef.current.flyTo([lat, lng], 18, { duration: 1.5 });
-        
-        setTimeout(() => {
-            setFormPoint(p => ({ ...p, lat, lng, name: shortName }));
-            setIsFormOpen(true);
-            setTimeout(() => {
-                const nameInput = document.getElementById('name');
-                if (nameInput) {
-                    nameInput.value = shortName;
-                }
-            }, 100);
-        }, 1500);
-
-        setOnlineResults([]);
-    };
-
-    const clearSearch = () => {
-        setSearchText('');
-        setOnlineResults([]);
-        if (searchMarkerRef.current && mapRef.current) { 
-            mapRef.current.removeLayer(searchMarkerRef.current); 
-            searchMarkerRef.current = null; 
-        }
-    };
-
-    // ---------------------------------------------------------------------------
-    // EXPORT / IMPORT (Backend connected)
-    // ---------------------------------------------------------------------------
-    const exportData = () => {
-        const headers = ["ID", "ชื่อสถานที่/บ้านเลขที่", "สถานะ", "ละติจูด", "ลองจิจูด", "บันทึกเพิ่มเติม", "วันที่"];
-        const rows = surveyPoints.map(p => [
-            p.id,
-            `"${(p.name || '').replace(/"/g, '""')}"`,
-            p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ',
-            p.lat,
-            p.lng,
-            `"${(p.notes || '').replace(/"/g, '""')}"`,
-            p.date
-        ]);
-        // \uFEFF for Excel UTF-8 BOM
-        const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    };
-
-    // Export PDF Report
     const exportToPDF = (id) => {
         const point = surveyPoints.find(p => p.id === id);
         if (!point) return;
@@ -965,7 +538,7 @@ function App() {
 
         const statusText = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ';
         const statusColor = point.status === 'surveyed' ? '#10b981' : '#f59e0b';
-        
+
         let imgHtml = '';
         if (point.imageUrl) {
             imgHtml = `<div style="margin-top: 20px; text-align: center;">
@@ -1011,17 +584,17 @@ function App() {
         `;
 
         const opt = {
-            margin:       0.5,
-            filename:     `Survey_Report_${point.name.replace(/\s+/g, '_')}.pdf`,
-            image:        { type: 'jpeg', quality: 0.98 },
-            html2canvas:  { scale: 2, useCORS: true },
-            jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+            margin: 0.5,
+            filename: `Survey_Report_${point.name.replace(/\s+/g, '_')}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true },
+            jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
         };
 
         // Ensure images are loaded before generating PDF
         const images = printContainer.querySelectorAll('img');
         let loadedImages = 0;
-        
+
         const generatePdf = () => {
             window.html2pdf().set(opt).from(printContainer).save().then(() => {
                 Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'ดาวน์โหลดรายงาน PDF เรียบร้อย', timer: 2000, showConfirmButton: false });
@@ -1046,6 +619,487 @@ function App() {
             generatePdf();
         }
     };
+
+    const openSurveyForm = (id = null, lat = null, lng = null) => {
+        if (!isAuthenticated) {
+            Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มหรือแก้ไขจุดสำรวจได้', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            return;
+        }
+
+        setSelectedPhoto(null);
+        setPhotoPreview(null);
+        if (id && id !== 'new') {
+            const p = surveyPoints.find(p => p.id === id);
+            if (p) { setFormPoint({ ...p }); setIsFormOpen(true); }
+        } else {
+            setFormPoint({ id: '', name: '', status: 'surveyed', lat: lat ?? NONG_KHAEM_CENTER[0], lng: lng ?? NONG_KHAEM_CENTER[1], notes: '', date: new Date().toISOString().split('T')[0] });
+            setIsFormOpen(true);
+        }
+    };
+
+    const cancelNavigation = () => {
+        if (routingControlRef.current && mapRef.current) {
+            mapRef.current.removeControl(routingControlRef.current);
+            routingControlRef.current = null;
+        }
+        setNavActive(false);
+        setRouteSummary('');
+        setRouteInstructions([]);
+        if (mapRef.current) mapRef.current.setView(NONG_KHAEM_CENTER, 14);
+    };
+
+    const deleteSurveyPoint = async (id) => {
+        const result = await Swal.fire({
+            title: 'ยืนยันการลบ?',
+            text: "ต้องการลบจุดสำรวจนี้ใช่หรือไม่?",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#6b7280',
+            confirmButtonText: 'ใช่, ลบเลย!',
+            cancelButtonText: 'ยกเลิก',
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                const res = await fetch(`${API_URL}/locations/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (res.status === 401 || res.status === 403) {
+                    Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                    return handleLogout();
+                }
+
+                if (res.ok) {
+                    setSurveyPoints(prev => prev.filter(p => p.id !== id));
+                    cancelNavigation();
+                    Swal.fire({ icon: 'success', title: 'ลบสำเร็จ', showConfirmButton: false, timer: 1500, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                } else {
+                    Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'ลบข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                }
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            }
+        }
+    };
+
+    // Render markers
+    useEffect(() => {
+        if (!mapRef.current || !markerClusterGroupRef.current) return;
+
+        // Remove existing markers from cluster group
+        markerClusterGroupRef.current.clearLayers();
+        markersRef.current = {};
+
+        const filtered = surveyPoints.filter(p => {
+            if (activeFilter !== 'all' && p.status !== activeFilter) return false;
+            if (searchText.trim()) {
+                const q = searchText.toLowerCase();
+                if (!(p.name.toLowerCase().includes(q) || (p.notes && p.notes.toLowerCase().includes(q)))) return false;
+            }
+            if (filterRadius > 0 && userLocationRef.current && mapRef.current) {
+                const dist = mapRef.current.distance(userLocationRef.current, [p.lat, p.lng]);
+                if (dist > filterRadius) return false;
+            }
+            return true;
+        });
+
+        // Heatmap Logic
+        if (isHeatmapMode) {
+            if (mapRef.current.hasLayer(markerClusterGroupRef.current)) {
+                mapRef.current.removeLayer(markerClusterGroupRef.current);
+            }
+            if (heatLayerRef.current) {
+                mapRef.current.removeLayer(heatLayerRef.current);
+            }
+
+            const heatPoints = filtered.map(p => [p.lat, p.lng, 1.0]);
+
+            if (window.L && window.L.heatLayer) {
+                heatLayerRef.current = L.heatLayer(heatPoints, {
+                    radius: 25,
+                    blur: 15,
+                    maxZoom: 15,
+                    gradient: { 0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red' }
+                }).addTo(mapRef.current);
+            }
+            return; // Skip normal marker rendering in heatmap mode
+        } else {
+            if (heatLayerRef.current && mapRef.current.hasLayer(heatLayerRef.current)) {
+                mapRef.current.removeLayer(heatLayerRef.current);
+            }
+            if (!mapRef.current.hasLayer(markerClusterGroupRef.current)) {
+                mapRef.current.addLayer(markerClusterGroupRef.current);
+            }
+        }
+
+        filtered.forEach(point => {
+            const sc = point.status === 'surveyed' ? 'surveyed' : 'pending';
+            const iconHtml = point.status === 'surveyed'
+                ? '<i class="fa-solid fa-check"></i>'
+                : '<i class="fa-solid fa-triangle-exclamation"></i>';
+
+            const icon = L.divIcon({
+                className: 'custom-map-marker',
+                html: `<div class="marker-pin ${sc}">${iconHtml}</div>`,
+                iconSize: [30, 42], iconAnchor: [15, 48], popupAnchor: [0, -42]
+            });
+
+            const marker = L.marker([point.lat, point.lng], { icon, draggable: true });
+            const statusLabel = point.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ';
+            const badgeClass = point.status === 'surveyed' ? 'surveyed' : 'pending';
+
+            marker.on('dragend', async (e) => {
+                const newPos = e.target.getLatLng();
+                const payload = { ...point, lat: newPos.lat, lng: newPos.lng };
+
+                try {
+                    const res = await fetch(`${API_URL}/locations/${point.id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.status === 401 || res.status === 403) {
+                        Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                        return handleLogout();
+                    }
+
+                    if (res.ok) {
+                        setSurveyPoints(prev => prev.map(p => p.id === point.id ? payload : p));
+                    } else {
+                        marker.setLatLng([point.lat, point.lng]);
+                        Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'อัปเดตตำแหน่งล้มเหลว', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                    }
+                } catch (err) {
+                    marker.setLatLng([point.lat, point.lng]);
+                    console.error("Error updating marker position:", err);
+                }
+            });
+
+            const imageHtml = point.imageUrl
+                ? `<div class="popup-image" style="width: 100%; height: 120px; overflow: hidden; border-radius: 6px; margin-bottom: 8px;"><img src="${API_URL.replace('/api', '')}${point.imageUrl}" style="width: 100%; height: 100%; object-fit: cover;" /></div>`
+                : '';
+
+            marker.bindPopup(`
+                <div class="popup-container">
+                    ${imageHtml}
+                    <div class="popup-header">
+                        <span class="popup-title">${point.name}</span>
+                        <span class="badge ${badgeClass}">${statusLabel}</span>
+                    </div>
+                    <p class="popup-desc">${point.notes || 'ไม่มีบันทึกเพิ่มเติม'}</p>
+                    <div class="popup-meta">
+                        <span><i class="fa-solid fa-calendar-days"></i> ${point.date || '-'}</span>
+                        <span><i class="fa-solid fa-location-crosshairs"></i> ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}</span>
+                    </div>
+                    <div class="popup-actions" style="flex-wrap: wrap;">
+                        <button class="popup-btn primary popup-nav-btn" data-lat="${point.lat}" data-lng="${point.lng}" data-name="${point.name.replace(/"/g, '&quot;')}">
+                            <i class="fa-solid fa-route"></i> นำทาง
+                        </button>
+                        <a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}" target="_blank" class="popup-btn" style="background: var(--bg-hover); color: var(--text-primary); text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 10px; border-radius: 6px;">
+                            <i class="fa-solid fa-street-view"></i> Street View
+                        </a>
+                        <button class="popup-btn popup-pdf-btn" data-id="${point.id}" style="background: var(--bg-hover); color: var(--text-primary);">
+                            <i class="fa-solid fa-file-pdf text-red"></i> PDF
+                        </button>
+                        <button class="popup-btn popup-edit-btn" data-id="${point.id}">
+                            <i class="fa-solid fa-pen-to-square"></i> แก้ไข
+                        </button>
+                        <button class="popup-btn popup-del-btn" data-id="${point.id}">
+                            <i class="fa-solid fa-trash-can"></i> ลบ
+                        </button>
+                    </div>
+                </div>
+            `);
+
+            // Add to cluster group instead of map directly
+            markerClusterGroupRef.current.addLayer(marker);
+            markersRef.current[point.id] = marker;
+        });
+
+        const onPopupOpen = (e) => {
+            const el = e.popup.getElement();
+            if (!el) return;
+            const navBtn = el.querySelector('.popup-nav-btn');
+            const pdfBtn = el.querySelector('.popup-pdf-btn');
+            const editBtn = el.querySelector('.popup-edit-btn');
+            const delBtn = el.querySelector('.popup-del-btn');
+            if (navBtn) navBtn.onclick = () => startNavigation(parseFloat(navBtn.dataset.lat), parseFloat(navBtn.dataset.lng), navBtn.dataset.name);
+            if (pdfBtn) pdfBtn.onclick = () => exportToPDF(pdfBtn.dataset.id);
+            if (editBtn) editBtn.onclick = () => openSurveyForm(editBtn.dataset.id);
+            if (delBtn) delBtn.onclick = () => deleteSurveyPoint(delBtn.dataset.id);
+        };
+
+        mapRef.current.on('popupopen', onPopupOpen);
+        return () => { if (mapRef.current) mapRef.current.off('popupopen', onPopupOpen); };
+    }, [surveyPoints, activeFilter, searchText, isHeatmapMode, isAuthenticated, isDataLoaded]);
+
+    // ---------------------------------------------------------------------------
+    // NAVIGATION (OSRM)
+    // ---------------------------------------------------------------------------
+
+
+
+
+    // ---------------------------------------------------------------------------
+    // CRUD (Connected to Backend)
+    // ---------------------------------------------------------------------------
+
+    const exportToCSV = () => {
+        if (surveyPoints.length === 0) return Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ส่งออก', 'info');
+        const headers = ['ID', 'ชื่อจุดสำรวจ', 'สถานะ', 'ละติจูด', 'ลองจิจูด', 'บันทึก', 'วันที่'];
+        const csvContent = [
+            headers.join(','),
+            ...surveyPoints.map(p =>
+                `"${p.id}","${p.name}","${p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}","${p.lat}","${p.lng}","${p.notes ? p.notes.replace(/\n/g, ' ') : ''}","${p.date}"`
+            )
+        ].join('\n');
+
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `survey_data_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    // ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+
+
+    const handleFormSubmit = async (e) => {
+        e.preventDefault();
+        if (!formPoint.name.trim()) {
+            Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'กรุณากรอกชื่อสถานที่สำรวจ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            return;
+        }
+
+        try {
+            const isUpdate = !!formPoint.id;
+            const method = isUpdate ? 'PUT' : 'POST';
+            const endpoint = isUpdate ? `${API_URL}/locations/${formPoint.id}` : `${API_URL}/locations`;
+
+            let finalImageUrl = formPoint.imageUrl || null;
+            if (selectedPhoto) {
+                const formData = new FormData();
+                formData.append('photo', selectedPhoto);
+                const uploadRes = await fetch(`${API_URL}/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` },
+                    body: formData
+                });
+                if (uploadRes.ok) {
+                    const uploadData = await uploadRes.json();
+                    finalImageUrl = uploadData.imageUrl;
+                } else {
+                    Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'อัปโหลดรูปภาพไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                    return;
+                }
+            }
+
+            const payloadId = isUpdate ? formPoint.id : 'point-' + Date.now();
+            const payload = { ...formPoint, id: payloadId, name: formPoint.name.trim(), notes: formPoint.notes.trim(), imageUrl: finalImageUrl };
+
+            const res = await fetch(endpoint, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.status === 401 || res.status === 403) {
+                Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                return handleLogout();
+            }
+
+            if (res.ok) {
+                if (isUpdate) {
+                    setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
+                } else {
+                    setSurveyPoints(prev => [...prev, payload]);
+                }
+                Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'บันทึกข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                setIsFormOpen(false);
+            } else {
+                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'บันทึกข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            }
+        } catch (err) {
+            Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `บันทึกข้อมูลล้มเหลว: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+        }
+    };
+
+
+
+    // ---------------------------------------------------------------------------
+    // NOMINATIM SEARCH
+    // ---------------------------------------------------------------------------
+    const searchOnline = async () => {
+        let query = searchText.trim();
+        if (!query) { setOnlineResults([]); return; }
+
+        // 1. Fix common Thai typing typo (two sara E's instead of one sara Ae)
+        query = query.replace(/เเ/g, 'แ');
+
+        // 2. Smart Synonym Replacer (Emulating Google's AI for Longdo Map matching)
+        // Many users type informal names, but Longdo requires official database names
+        query = query.replace(/กรมสรรพากร\s*พื้นที่/g, 'สำนักงานสรรพากรพื้นที่สาขา');
+        query = query.replace(/สรรพากร\s*หนองแขม/g, 'สรรพากรพื้นที่สาขาหนองแขม');
+        query = query.replace(/สรรพากร\s*พื้นที่หนองแขม/g, 'สรรพากรพื้นที่สาขาหนองแขม');
+        query = query.replace(/กรมสรรพากร/g, 'สำนักงานสรรพากร');
+        query = query.replace(/อำเภอหนองแขม/g, 'เขตหนองแขม');
+
+        setIsSearchingOnline(true);
+        try {
+            let scopedQuery = query;
+            if (!scopedQuery.includes('หนองแขม') && !scopedQuery.includes('หนองค้างพลู')) {
+                scopedQuery += ' เขตหนองแขม';
+            }
+
+            // 1. Fetch from ArcGIS (Good for street numbers and roads)
+            const arcgisBias = `&location=100.3582,13.7056&distance=8000&outFields=*`;
+            const arcgisReq = fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(scopedQuery)}&f=json&maxLocations=5${arcgisBias}`).catch(() => null);
+
+            // 2. Fetch from Longdo Map (Good for Thai villages, specific local places)
+            // Use the raw 'query' for Longdo because appending 'เขตหนองแขม' breaks its POI matching
+            const longdoKey = '540e970a4371209df0e7e9ced38f54f9';
+            const longdoReq = fetch(`https://search.longdo.com/mapsearch/json/search?keyword=${encodeURIComponent(query)}&limit=5&key=${longdoKey}`).catch(() => null);
+
+            const [arcgisRes, longdoRes] = await Promise.all([arcgisReq, longdoReq]);
+
+            let combinedResults = [];
+
+            // Parse Longdo Results
+            if (longdoRes && longdoRes.ok) {
+                const longdoData = await longdoRes.json();
+                if (longdoData.data && Array.isArray(longdoData.data)) {
+                    const mappedLongdo = longdoData.data.map(item => ({
+                        display_name: item.address || item.name,
+                        name: item.name,
+                        lat: item.lat,
+                        lon: item.lon,
+                        source: 'longdo'
+                    }));
+                    combinedResults = [...combinedResults, ...mappedLongdo];
+                }
+            }
+
+            // Parse ArcGIS Results
+            if (arcgisRes && arcgisRes.ok) {
+                const arcgisData = await arcgisRes.json();
+                if (arcgisData.candidates && arcgisData.candidates.length > 0) {
+                    const mappedArcgis = arcgisData.candidates.map(item => ({
+                        display_name: item.attributes?.LongLabel || item.address,
+                        name: item.address,
+                        lat: item.location.y,
+                        lon: item.location.x,
+                        source: 'arcgis'
+                    }));
+                    combinedResults = [...combinedResults, ...mappedArcgis];
+                }
+            }
+
+            // Remove duplicates by name or very close coordinates (optional, but keeping it simple)
+            // Just return top 7
+            if (combinedResults.length > 0) {
+                setOnlineResults(combinedResults.slice(0, 7));
+            } else {
+                setOnlineResults([]);
+            }
+        } catch (err) { setOnlineResults([]); }
+        finally { setIsSearchingOnline(false); }
+    };
+
+    // Auto-search when user types
+    useEffect(() => {
+        const delaySearch = setTimeout(() => {
+            if (searchText.trim().length > 1) {
+                searchOnline();
+            } else if (searchText.trim().length === 0) {
+                setOnlineResults([]);
+            }
+        }, 800);
+        return () => clearTimeout(delaySearch);
+    }, [searchText]);
+
+    const handleSearchItemClick = (item) => {
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        const shortName = item.name || item.display_name.split(',')[0];
+
+        if (searchMarkerRef.current) mapRef.current.removeLayer(searchMarkerRef.current);
+
+        const icon = L.divIcon({
+            className: 'custom-map-marker',
+            html: `<div class="marker-pin" style="background:#3b82f6;"><i class="fa-solid fa-star"></i></div>`,
+            iconSize: [30, 42], iconAnchor: [15, 48], popupAnchor: [0, -42]
+        });
+
+        const marker = L.marker([lat, lng], { icon }).addTo(mapRef.current);
+        searchMarkerRef.current = marker;
+
+        mapRef.current.flyTo([lat, lng], 18, { duration: 1.5 });
+
+        setTimeout(() => {
+            setFormPoint(p => ({ ...p, lat, lng, name: shortName }));
+            setIsFormOpen(true);
+            setTimeout(() => {
+                const nameInput = document.getElementById('name');
+                if (nameInput) {
+                    nameInput.value = shortName;
+                }
+            }, 100);
+        }, 1500);
+
+        setOnlineResults([]);
+    };
+
+    const clearSearch = () => {
+        setSearchText('');
+        setOnlineResults([]);
+        if (searchMarkerRef.current && mapRef.current) {
+            mapRef.current.removeLayer(searchMarkerRef.current);
+            searchMarkerRef.current = null;
+        }
+    };
+
+    // ---------------------------------------------------------------------------
+    // EXPORT / IMPORT (Backend connected)
+    // ---------------------------------------------------------------------------
+    const exportData = () => {
+        const headers = ["ID", "ชื่อสถานที่/บ้านเลขที่", "สถานะ", "ละติจูด", "ลองจิจูด", "บันทึกเพิ่มเติม", "วันที่"];
+        const rows = surveyPoints.map(p => [
+            p.id,
+            `"${(p.name || '').replace(/"/g, '""')}"`,
+            p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ',
+            p.lat,
+            p.lng,
+            `"${(p.notes || '').replace(/"/g, '""')}"`,
+            p.date
+        ]);
+        // \uFEFF for Excel UTF-8 BOM
+        const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    // Export PDF Report
+
 
     // Export Summary of All Points to PDF
     const exportAllToPDF = () => {
@@ -1117,11 +1171,11 @@ function App() {
         `;
 
         const opt = {
-            margin:       0.5,
-            filename:     `Summary_Report_${new Date().toISOString().split('T')[0]}.pdf`,
-            image:        { type: 'jpeg', quality: 0.98 },
-            html2canvas:  { scale: 2 },
-            jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' }
+            margin: 0.5,
+            filename: `Summary_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'in', format: 'a4', orientation: 'landscape' }
         };
 
         window.html2pdf().set(opt).from(printContainer).save().then(() => {
@@ -1142,13 +1196,13 @@ function App() {
                     // Send to backend
                     const res = await fetch(`${API_URL}/locations/import`, {
                         method: 'POST',
-                        headers: { 
+                        headers: {
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${authToken}`
                         },
                         body: JSON.stringify(parsed)
                     });
-                    
+
                     if (res.status === 401 || res.status === 403) {
                         Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
                         return handleLogout();
@@ -1217,7 +1271,7 @@ function App() {
                     {/* Mini progress ring */}
                     <div className="progress-ring-sm">
                         <svg width="36" height="36">
-                            <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3"/>
+                            <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
                             <circle
                                 cx="18" cy="18" r="14" fill="none"
                                 stroke="#10b981" strokeWidth="3"
@@ -1245,7 +1299,7 @@ function App() {
                         <span className="label">ยังไม่ตรวจ</span>
                     </div>
                 </div>
-                
+
                 {/* Dashboard Button */}
                 <button className="btn btn-primary" onClick={() => setIsDashboardOpen(true)} style={{ marginLeft: '12px', padding: '6px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
                     <i className="fa-solid fa-chart-pie"></i> สถิติ
@@ -1338,7 +1392,7 @@ function App() {
                         <i className="fa-solid fa-file-import"></i>
                         <span className="icon-btn-tooltip">นำเข้าข้อมูล</span>
                     </button>
-                    
+
                     <button className="icon-btn" onClick={() => setListOpen(o => !o)} title="เปิดแถบรายชื่อจุดสำรวจ">
                         <i className="fa-solid fa-list-ul"></i>
                         <span className="icon-btn-tooltip">รายการจุดสำรวจ</span>
@@ -1373,21 +1427,21 @@ function App() {
             {/* ===== MAP ===== */}
             <main className="map-container-wrapper" style={{ position: 'relative' }}>
                 <div id="map" className="map-view"></div>
-                
+
                 {/* Real-time Mouse Coordinate Display */}
-                <div 
-                    id="mouse-coords-display" 
-                    style={{ 
-                        position: 'absolute', 
-                        bottom: '20px', 
-                        left: '50%', 
-                        transform: 'translateX(-50%)', 
-                        background: 'rgba(0, 0, 0, 0.65)', 
-                        color: '#fff', 
-                        padding: '4px 12px', 
-                        borderRadius: '20px', 
-                        fontSize: '12px', 
-                        fontFamily: 'monospace', 
+                <div
+                    id="mouse-coords-display"
+                    style={{
+                        position: 'absolute',
+                        bottom: '20px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        background: 'rgba(0, 0, 0, 0.65)',
+                        color: '#fff',
+                        padding: '4px 12px',
+                        borderRadius: '20px',
+                        fontSize: '12px',
+                        fontFamily: 'monospace',
                         zIndex: 1000,
                         pointerEvents: 'none',
                         boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
@@ -1402,21 +1456,21 @@ function App() {
                     {/* Weather Widget */}
                     {weather && (
                         <div className="weather-widget" style={{
-                            background: 'var(--card-bg)', padding: '8px 12px', borderRadius: '20px', 
-                            boxShadow: 'var(--shadow-md)', display: 'flex', alignItems: 'center', gap: '8px', 
+                            background: 'var(--card-bg)', padding: '8px 12px', borderRadius: '20px',
+                            boxShadow: 'var(--shadow-md)', display: 'flex', alignItems: 'center', gap: '8px',
                             fontSize: '14px', fontWeight: 'bold', color: 'var(--text-primary)', marginBottom: '8px'
                         }}>
                             <i className={
                                 weather.weathercode === 0 ? "fa-solid fa-sun text-yellow" :
-                                [1,2,3].includes(weather.weathercode) ? "fa-solid fa-cloud-sun text-yellow" :
-                                [51,53,55,61,63,65].includes(weather.weathercode) ? "fa-solid fa-cloud-rain text-blue" :
-                                [95].includes(weather.weathercode) ? "fa-solid fa-cloud-bolt text-yellow" : "fa-solid fa-cloud"
+                                    [1, 2, 3].includes(weather.weathercode) ? "fa-solid fa-cloud-sun text-yellow" :
+                                        [51, 53, 55, 61, 63, 65].includes(weather.weathercode) ? "fa-solid fa-cloud-rain text-blue" :
+                                            [95].includes(weather.weathercode) ? "fa-solid fa-cloud-bolt text-yellow" : "fa-solid fa-cloud"
                             } style={{ fontSize: '18px' }}></i>
                             <span>{weather.temperature}°C</span>
                         </div>
                     )}
-                    <button 
-                        className={`map-ctrl-btn ${isHeatmapMode ? 'active' : ''}`} 
+                    <button
+                        className={`map-ctrl-btn ${isHeatmapMode ? 'active' : ''}`}
                         onClick={() => setIsHeatmapMode(!isHeatmapMode)}
                         title="โหมดแผนที่ความหนาแน่น (Heatmap)"
                         style={{ marginTop: '8px' }}
@@ -1424,25 +1478,25 @@ function App() {
                         <i className="fa-solid fa-fire"></i>
                     </button>
 
-                    <button 
-                        className="map-ctrl-btn" 
+                    <button
+                        className="map-ctrl-btn"
                         onClick={() => setTheme(theme === 'dark-theme' ? 'light-theme' : 'dark-theme')}
                         title={theme === 'dark-theme' ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
                         style={{ marginTop: '8px' }}
                     >
                         <i className={theme === 'dark-theme' ? "fa-solid fa-sun" : "fa-solid fa-moon"}></i>
                     </button>
-                    
-                    <button 
-                        className={`map-ctrl-btn ${isSatellite ? 'active' : ''}`} 
+
+                    <button
+                        className={`map-ctrl-btn ${isSatellite ? 'active' : ''}`}
                         onClick={() => setIsSatellite(!isSatellite)}
                         title="โหมดดาวเทียม"
                         style={{ marginTop: '8px' }}
                     >
                         <i className="fa-solid fa-satellite"></i>
                     </button>
-                    <button 
-                        className="map-ctrl-btn" 
+                    <button
+                        className="map-ctrl-btn"
                         onClick={() => {
                             if (userLocationRef.current && mapRef.current) {
                                 mapRef.current.flyTo(userLocationRef.current, 18, { duration: 1.5 });
@@ -1479,8 +1533,8 @@ function App() {
 
                         <div style={{ padding: '0 16px 12px 16px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <i className="fa-solid fa-street-view" style={{ color: 'var(--text-secondary)' }}></i>
-                            <select 
-                                value={filterRadius} 
+                            <select
+                                value={filterRadius}
                                 onChange={(e) => setFilterRadius(Number(e.target.value))}
                                 style={{ flex: 1, padding: '6px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '13px' }}
                             >
@@ -1600,7 +1654,7 @@ function App() {
                                     </label>
                                 </div>
                             </div>
-                            
+
                             {/* Photo Upload Section */}
                             <div className="form-group">
                                 <label>ภาพถ่ายหน้างาน</label>
@@ -1608,7 +1662,7 @@ function App() {
                                     {photoPreview || formPoint.imageUrl ? (
                                         <div className="photo-preview-container" style={{ position: 'relative', width: '100%', height: '160px', borderRadius: '8px', overflow: 'hidden', marginBottom: '8px' }}>
                                             <img src={photoPreview || formPoint.imageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                            <button type="button" onClick={() => { setSelectedPhoto(null); setPhotoPreview(null); setFormPoint(p => ({...p, imageUrl: null})); }} 
+                                            <button type="button" onClick={() => { setSelectedPhoto(null); setPhotoPreview(null); setFormPoint(p => ({ ...p, imageUrl: null })); }}
                                                 style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: '30px', height: '30px', cursor: 'pointer' }}>
                                                 <i className="fa-solid fa-times"></i>
                                             </button>
@@ -1669,8 +1723,8 @@ function App() {
                         <div className="modal-body" style={{ padding: '20px' }}>
                             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
                                 {/* Donut Chart */}
-                                <div style={{ 
-                                    width: '180px', height: '180px', borderRadius: '50%', 
+                                <div style={{
+                                    width: '180px', height: '180px', borderRadius: '50%',
                                     background: `conic-gradient(var(--color-green) ${stats.percent}%, var(--color-yellow) 0)`,
                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     boxShadow: 'var(--shadow-md)'
@@ -1680,12 +1734,12 @@ function App() {
                                         <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>สำเร็จแล้ว</span>
                                     </div>
                                 </div>
-                                
+
                                 {/* Stats Details */}
                                 <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                     <div style={{ padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--primary)' }}>
                                         <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>จุดสำรวจทั้งหมด</div>
-                                        <div style={{ fontSize: '28px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{stats.total} <span style={{fontSize:'16px', fontWeight:'normal'}}>จุด</span></div>
+                                        <div style={{ fontSize: '28px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{stats.total} <span style={{ fontSize: '16px', fontWeight: 'normal' }}>จุด</span></div>
                                     </div>
                                     <div style={{ display: 'flex', gap: '16px' }}>
                                         <div style={{ flex: 1, padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--color-green)' }}>
