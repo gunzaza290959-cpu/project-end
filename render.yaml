@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: nongkhaem-survey-app
+    env: node
+    buildCommand: "cd phanvadee-data-entry && npm install && npm run build && cd ../backend && npm install"
+    startCommand: "cd backend && node server.js"
+    envVars:
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: sqlite-and-uploads-data
+      mountPath: /opt/render/project/src/backend
+      sizeGB: 1

@@ -325,6 +325,22 @@ app.get('/api/geocode', async (req, res) => {
     }
 });
 
+// ---------------------------------------------------------
+// SERVE FRONTEND (PRODUCTION)
+// ---------------------------------------------------------
+// Serve static files from the Vite build directory
+const frontendPath = path.join(__dirname, '../phanvadee-data-entry/dist');
+if (fs.existsSync(frontendPath)) {
+    app.use(express.static(frontendPath));
+    
+    // Catch-all route to serve index.html for React Router
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(frontendPath, 'index.html'));
+    });
+} else {
+    console.log("Frontend build not found. API only mode.");
+}
+
 server.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT} with WebSocket`);
 });

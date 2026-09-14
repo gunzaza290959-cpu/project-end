@@ -204,7 +204,7 @@ function App() {
     const [routeInstructions, setRouteInstructions] = useState([]);
 
     // Stats
-    const [stats, setStats] = useState({ total: 0, surveyed: 0, pending: 0, percent: 0, circleOffset: 213.6 });
+    const [stats, setStats] = useState({ total: 0, surveyed: 0, pending: 0, percent: 0, circleOffset: 213.6, withPhotos: 0, withNotes: 0, photoPercent: 0, notesPercent: 0, recentActivities: [] });
 
     // --- Refs ---
     const mapRef = useRef(null);
@@ -314,8 +314,19 @@ function App() {
         const surveyed = surveyPoints.filter(p => p.status === 'surveyed').length;
         const pending = total - surveyed;
         const percent = total > 0 ? Math.round((surveyed / total) * 100) : 0;
+        
+        const withPhotos = surveyPoints.filter(p => p.imageUrl).length;
+        const withNotes = surveyPoints.filter(p => p.notes && p.notes.trim() !== '').length;
+        const photoPercent = total > 0 ? Math.round((withPhotos / total) * 100) : 0;
+        const notesPercent = total > 0 ? Math.round((withNotes / total) * 100) : 0;
+        
+        // Sort by date (newest first), assuming date exists, fallback to id if not.
+        const recentActivities = [...surveyPoints]
+            .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0) || b.id - a.id)
+            .slice(0, 3); // Get top 3 recent
+
         const circumference = 213.628;
-        setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference });
+        setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference, withPhotos, withNotes, photoPercent, notesPercent, recentActivities });
     }, [surveyPoints]);
 
     // Initialize Leaflet map
@@ -804,6 +815,9 @@ function App() {
                         <button class="popup-btn primary popup-nav-btn" data-lat="${point.lat}" data-lng="${point.lng}" data-name="${point.name.replace(/"/g, '&quot;')}">
                             <i class="fa-solid fa-route"></i> นำทาง
                         </button>
+                        <a href="https://www.google.com/maps/search/?api=1&query=${point.lat},${point.lng}" target="_blank" class="popup-btn" style="background: var(--bg-hover); color: var(--text-primary); text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 10px; border-radius: 6px;">
+                            <i class="fa-solid fa-map-location-dot"></i> Google Maps
+                        </a>
                         <a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}" target="_blank" class="popup-btn" style="background: var(--bg-hover); color: var(--text-primary); text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 10px; border-radius: 6px;">
                             <i class="fa-solid fa-street-view"></i> Street View
                         </a>
@@ -1712,47 +1726,169 @@ function App() {
             )}
             {/* ===== DASHBOARD MODAL ===== */}
             {isDashboardOpen && (
-                <div className="modal-overlay">
-                    <div className="modal-card" style={{ maxWidth: '600px', width: '90%' }}>
-                        <header className="modal-header">
-                            <h3><i className="fa-solid fa-chart-pie"></i> รายงานสถิติภาพรวม (Dashboard)</h3>
-                            <button className="modal-close" onClick={() => setIsDashboardOpen(false)}>
+                <div className="modal-overlay" style={{ position: 'fixed', zIndex: 9999 }}>
+                    <button 
+                        onClick={() => setIsDashboardOpen(false)}
+                        style={{
+                            position: 'absolute',
+                            top: '20px',
+                            right: '20px',
+                            width: '48px',
+                            height: '48px',
+                            borderRadius: '50%',
+                            background: '#ef4444',
+                            color: 'white',
+                            border: 'none',
+                            fontSize: '24px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            zIndex: 10000,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                            transition: 'all 0.3s',
+                        }}
+                        onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; e.currentTarget.style.background = '#dc2626'; }}
+                        onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = '#ef4444'; }}
+                        title="ปิดหน้าต่าง"
+                    >
+                        <i className="fa-solid fa-xmark"></i>
+                    </button>
+                    <div className="bento-dashboard-modal">
+                        <header className="dashboard-header-modern">
+                            <div>
+                                <h3>
+                                    <i className="fa-solid fa-chart-pie"></i> 
+                                    ภาพรวมสถิติการสำรวจ
+                                </h3>
+                                <div className="dashboard-subtitle">ข้อมูลสรุปและสถานะของระบบ ณ ปัจจุบัน</div>
+                            </div>
+                            <button className="dashboard-close" onClick={() => setIsDashboardOpen(false)}>
                                 <i className="fa-solid fa-xmark"></i>
                             </button>
                         </header>
-                        <div className="modal-body" style={{ padding: '20px' }}>
-                            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
-                                {/* Donut Chart */}
-                                <div style={{
-                                    width: '180px', height: '180px', borderRadius: '50%',
-                                    background: `conic-gradient(var(--color-green) ${stats.percent}%, var(--color-yellow) 0)`,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    boxShadow: 'var(--shadow-md)'
-                                }}>
-                                    <div style={{ width: '130px', height: '130px', borderRadius: '50%', background: 'var(--card-bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                                        <span style={{ fontSize: '32px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{stats.percent}%</span>
-                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>สำเร็จแล้ว</span>
+                        
+                        <div className="bento-grid">
+                            {/* Main Progress Chart */}
+                            <div className="bento-card main-stat">
+                                <div className="main-stat-content">
+                                    <div className="stat-label">
+                                        <div className="stat-icon primary"><i className="fa-solid fa-layer-group"></i></div>
+                                        จุดสำรวจทั้งหมด
                                     </div>
+                                    <div className="stat-value">{stats.total} <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>จุด</span></div>
+                                    <div className="stat-sub"><i className="fa-solid fa-arrow-trend-up"></i> ข้อมูลภาพรวมในระบบทั้งหมด</div>
                                 </div>
-
-                                {/* Stats Details */}
-                                <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                    <div style={{ padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--primary)' }}>
-                                        <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>จุดสำรวจทั้งหมด</div>
-                                        <div style={{ fontSize: '28px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{stats.total} <span style={{ fontSize: '16px', fontWeight: 'normal' }}>จุด</span></div>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '16px' }}>
-                                        <div style={{ flex: 1, padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--color-green)' }}>
-                                            <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>สำรวจแล้ว</div>
-                                            <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--color-green)' }}>{stats.surveyed}</div>
-                                        </div>
-                                        <div style={{ flex: 1, padding: '16px', background: 'var(--bg-hover)', borderRadius: '12px', borderLeft: '4px solid var(--color-yellow)' }}>
-                                            <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>ยังไม่ตรวจ</div>
-                                            <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--color-yellow)' }}>{stats.pending}</div>
-                                        </div>
+                                <div className="main-stat-chart" style={{ background: `conic-gradient(var(--color-green) ${stats.percent}%, var(--color-yellow) 0)` }}>
+                                    <div className="chart-center">
+                                        <div className="chart-percent">{stats.percent}%</div>
+                                        <div className="chart-label">สำเร็จแล้ว</div>
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Surveyed Stats */}
+                            <div className="bento-card success-stat">
+                                <div className="stat-label">
+                                    <div className="stat-icon success"><i className="fa-solid fa-check-circle"></i></div>
+                                    สำรวจแล้ว
+                                </div>
+                                <div className="stat-value text-green">{stats.surveyed}</div>
+                                <div className="stat-sub"><i className="fa-solid fa-clipboard-check"></i> ดำเนินการเรียบร้อย</div>
+                            </div>
+
+                            {/* Pending Stats */}
+                            <div className="bento-card warning-stat">
+                                <div className="stat-label">
+                                    <div className="stat-icon warning"><i className="fa-solid fa-clock"></i></div>
+                                    ยังไม่ตรวจ
+                                </div>
+                                <div className="stat-value text-yellow">{stats.pending}</div>
+                                <div className="stat-sub"><i className="fa-solid fa-hourglass-half"></i> รอการตรวจสอบ</div>
+                            </div>
+                            
+                            {/* Data Quality - Photos */}
+                            <div className="bento-card info-stat">
+                                <div className="stat-label">
+                                    <div className="stat-icon info"><i className="fa-solid fa-image"></i></div>
+                                    มีรูปภาพประกอบ
+                                </div>
+                                <div className="stat-value" style={{color: '#60a5fa'}}>{stats.withPhotos} <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>จุด</span></div>
+                                <div className="stat-sub">
+                                    <div className="mini-progress-bar">
+                                        <div className="mini-progress-fill" style={{width: `${stats.photoPercent}%`, background: '#60a5fa'}}></div>
+                                    </div>
+                                    {stats.photoPercent}% ของทั้งหมด
+                                </div>
+                            </div>
+
+                            {/* Data Quality - Notes */}
+                            <div className="bento-card info-stat">
+                                <div className="stat-label">
+                                    <div className="stat-icon info"><i className="fa-solid fa-note-sticky"></i></div>
+                                    บันทึกเพิ่มเติม
+                                </div>
+                                <div className="stat-value" style={{color: '#a78bfa'}}>{stats.withNotes} <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>จุด</span></div>
+                                <div className="stat-sub">
+                                    <div className="mini-progress-bar">
+                                        <div className="mini-progress-fill" style={{width: `${stats.notesPercent}%`, background: '#a78bfa'}}></div>
+                                    </div>
+                                    {stats.notesPercent}% ของทั้งหมด
+                                </div>
+                            </div>
+
+                            {/* Recent Activities */}
+                            <div className="bento-card recent-activities" style={{ gridColumn: 'span 2' }}>
+                                <div className="stat-label">
+                                    <div className="stat-icon" style={{background: 'rgba(255,255,255,0.1)', color: 'white'}}><i className="fa-solid fa-history"></i></div>
+                                    อัปเดตล่าสุด
+                                </div>
+                                <div className="recent-list">
+                                    {stats.recentActivities && stats.recentActivities.length > 0 ? (
+                                        stats.recentActivities.map((activity, idx) => (
+                                            <div key={idx} className="recent-item">
+                                                <div className={`status-dot ${activity.status === 'surveyed' ? 'bg-green' : 'bg-yellow'}`}></div>
+                                                <div className="recent-details">
+                                                    <div className="recent-name">{activity.name}</div>
+                                                    <div className="recent-date"><i className="fa-regular fa-calendar"></i> {activity.date || 'ไม่มีวันที่'}</div>
+                                                </div>
+                                                <div className={`recent-badge ${activity.status === 'surveyed' ? 'badge-green' : 'badge-yellow'}`}>
+                                                    {activity.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div style={{color: 'var(--text-secondary)', fontStyle: 'italic', padding: '10px 0'}}>ไม่มีข้อมูลล่าสุด</div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '20px' }}>
+                            <button 
+                                onClick={() => setIsDashboardOpen(false)}
+                                style={{
+                                    padding: '12px 24px', 
+                                    fontSize: '16px', 
+                                    borderRadius: '12px', 
+                                    background: 'var(--color-primary, #3b82f6)', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    fontWeight: '500',
+                                    width: '100%',
+                                    justifyContent: 'center',
+                                    transition: 'background 0.3s',
+                                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
+                                onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+                            >
+                                <i className="fa-solid fa-xmark"></i>
+                                ปิดหน้าต่างสรุปข้อมูล
+                            </button>
                         </div>
                     </div>
                 </div>
