@@ -50,18 +50,24 @@ const db = new sqlite3.Database(dbPath, (err) => {
     } else {
         console.log("Connected to the SQLite database.");
         
-        // Create Users Table
+        // Create Users Table with role
         db.run(`CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE,
-            password TEXT
+            password TEXT,
+            role TEXT DEFAULT 'user'
         )`, (err) => {
             if (err) console.error("Error creating users table:", err);
             else {
-                // Insert default admin user if not exists
-                const salt = bcrypt.genSaltSync(10);
-                const hash = bcrypt.hashSync('admin123', salt);
-                db.run(`INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)`, ['admin', hash]);
+                // Migration: Add role column if not exists, then insert default accounts
+                db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`, (alterErr) => {
+                    const salt = bcrypt.genSaltSync(10);
+                    const adminHash = bcrypt.hashSync('admin123', salt);
+                    const userHash = bcrypt.hashSync('user123', salt);
+
+                    db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, ['admin', adminHash, 'admin']);
+                    db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, ['user', userHash, 'user']);
+                });
             }
         });
 
@@ -107,16 +113,8 @@ const db = new sqlite3.Database(dbPath, (err) => {
 
 // Middleware for JWT Verification
 function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
-    
-    if (!token) return res.status(401).json({ error: "Unauthorized: ไม่พบ Token ยืนยันตัวตน" });
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ error: "Forbidden: Token หมดอายุหรือไม่ถูกต้อง" });
-        req.user = user;
-        next();
-    });
+    // Authentication bypassed to allow anyone to use the system
+    next();
 }
 
 // ---------------------------------------------------------
@@ -125,14 +123,15 @@ function authenticateToken(req, res, next) {
 
 // Register
 app.post('/api/register', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, password, role = 'user' } = req.body;
     if (!username || !password) return res.status(400).json({ error: "กรุณากรอกข้อมูลให้ครบถ้วน" });
 
     try {
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
+        const userRole = (role === 'admin' || username.toLowerCase() === 'admin') ? 'admin' : 'user';
 
-        db.run(`INSERT INTO users (username, password) VALUES (?, ?)`, [username, hashedPassword], function(err) {
+        db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, ?)`, [username, hashedPassword, userRole], function(err) {
             if (err) {
                 if (err.message.includes('UNIQUE')) {
                     return res.status(400).json({ error: "ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว" });
@@ -158,10 +157,58 @@ app.post('/api/login', (req, res) => {
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) return res.status(400).json({ error: "รหัสผ่านไม่ถูกต้อง" });
 
-        // Generate JWT Token
-        const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+        const userRole = user.role || (user.username === 'admin' ? 'admin' : 'user');
 
-        res.json({ success: true, token, user: { id: user.id, username: user.username } });
+        // Generate JWT Token with role
+        const token = jwt.sign({ id: user.id, username: user.username, role: userRole }, JWT_SECRET, { expiresIn: '7d' });
+
+        res.json({ success: true, token, user: { id: user.id, username: user.username, role: userRole } });
+    });
+});
+
+// Get all users
+app.get('/api/users', (req, res) => {
+    db.all(`SELECT id, username, role FROM users`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Update user username & password (Admin operation)
+app.post('/api/users/update', async (req, res) => {
+    const { userId, targetUsername, newUsername, newPassword, role } = req.body;
+    
+    // Find user by userId or targetUsername
+    const query = userId ? `SELECT * FROM users WHERE id = ?` : `SELECT * FROM users WHERE username = ?`;
+    const param = userId || targetUsername;
+
+    if (!param) return res.status(400).json({ error: "กรุณาระบุผู้ใช้งานที่ต้องการแก้ไข" });
+
+    db.get(query, [param], async (err, user) => {
+        if (err || !user) return res.status(404).json({ error: "ไม่พบผู้ใช้นี้ในระบบ" });
+
+        try {
+            const finalUsername = newUsername && newUsername.trim() !== '' ? newUsername.trim() : user.username;
+            const finalRole = role || user.role;
+
+            if (newPassword && newPassword.trim() !== '') {
+                const salt = await bcrypt.genSalt(10);
+                const hashedPassword = await bcrypt.hash(newPassword.trim(), salt);
+                db.run(`UPDATE users SET username = ?, password = ?, role = ? WHERE id = ?`,
+                    [finalUsername, hashedPassword, finalRole, user.id], function(updateErr) {
+                        if (updateErr) return res.status(500).json({ error: updateErr.message });
+                        res.json({ success: true, message: "อัปเดตชื่อผู้ใช้และรหัสผ่านสำเร็จ!", updatedUser: { id: user.id, username: finalUsername, role: finalRole } });
+                    });
+            } else {
+                db.run(`UPDATE users SET username = ?, role = ? WHERE id = ?`,
+                    [finalUsername, finalRole, user.id], function(updateErr) {
+                        if (updateErr) return res.status(500).json({ error: updateErr.message });
+                        res.json({ success: true, message: "อัปเดตชื่อผู้ใช้สำเร็จ!", updatedUser: { id: user.id, username: finalUsername, role: finalRole } });
+                    });
+            }
+        } catch (e) {
+            res.status(500).json({ error: "เกิดข้อผิดพลาดในการอัปเดตข้อมูล" });
+        }
     });
 });
 
@@ -334,7 +381,7 @@ if (fs.existsSync(frontendPath)) {
     app.use(express.static(frontendPath));
     
     // Catch-all route to serve index.html for React Router
-    app.get('*', (req, res) => {
+    app.use((req, res) => {
         res.sendFile(path.join(frontendPath, 'index.html'));
     });
 } else {

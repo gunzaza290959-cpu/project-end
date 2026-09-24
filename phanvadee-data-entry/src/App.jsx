@@ -7,6 +7,7 @@ import 'leaflet-routing-machine';
 import 'leaflet.heat';
 import Swal from 'sweetalert2';
 import { io } from 'socket.io-client';
+import * as XLSX from 'xlsx';
 
 // ---------------------------------------------------------------------------
 // CONSTANTS
@@ -120,6 +121,28 @@ function LoginScreen({ onLogin }) {
                         {isRegisterMode ? 'เข้าสู่ระบบเลย' : 'สมัครสมาชิก'}
                     </button>
                 </div>
+
+                {/* Sandbox Demo Accounts */}
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-color)', width: '100%' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8, textAlign: 'center', fontWeight: 'bold' }}>🧪 ทดสอบสิทธิ์ Sandbox (Quick Demo Login):</div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                            type="button"
+                            onClick={() => { setUsername('admin'); setPassword('admin123'); }}
+                            style={{ flex: 1, padding: '6px', fontSize: 12, borderRadius: 8, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)', cursor: 'pointer', fontWeight: 'bold' }}
+                        >
+                            🛡️ บัญชี Admin
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setUsername('user'); setPassword('user123'); }}
+                            style={{ flex: 1, padding: '6px', fontSize: 12, borderRadius: 8, background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)', cursor: 'pointer', fontWeight: 'bold' }}
+                        >
+                            👤 บัญชี User
+                        </button>
+                    </div>
+                </div>
+
                 <button className="btn" onClick={() => onLogin(null, null, true)} style={{ marginTop: 12, width: '100%', background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
                     ปิด (ดูแผนที่แบบผู้เยี่ยมชม)
                 </button>
@@ -179,12 +202,90 @@ function App() {
 
     // Form modal
     const [isFormOpen, setIsFormOpen] = useState(false);
+    const [isPickingMapLocation, setIsPickingMapLocation] = useState(false);
     const [formPoint, setFormPoint] = useState({ id: null, name: '', status: 'pending', lat: null, lng: null, notes: '', date: '', imageUrl: null });
 
     // Pro Features States
     const [selectedPhoto, setSelectedPhoto] = useState(null);
     const [photoPreview, setPhotoPreview] = useState(null);
     const [isDashboardOpen, setIsDashboardOpen] = useState(false);
+    const [isDataTableOpen, setIsDataTableOpen] = useState(false);
+    const [isAdminSettingsOpen, setIsAdminSettingsOpen] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Sandbox Role State (null = use authUser role, 'admin' or 'user')
+    const [sandboxRole, setSandboxRole] = useState(null);
+    const userRealRole = authUser?.role || (authUser?.username?.toLowerCase() === 'admin' ? 'admin' : 'user');
+    const effectiveRole = sandboxRole || userRealRole;
+    const isAdmin = effectiveRole === 'admin';
+    const isUserRole = effectiveRole === 'user';
+
+    // Admin Edit User Credentials State
+    const [editTargetUser, setEditTargetUser] = useState('admin');
+    const [editNewUsername, setEditNewUsername] = useState('');
+    const [editNewPassword, setEditNewPassword] = useState('');
+    const [editConfirmPassword, setEditConfirmPassword] = useState('');
+    const [userList, setUserList] = useState([]);
+    const [isSavingUser, setIsSavingUser] = useState(false);
+
+    useEffect(() => {
+        if (isAdminSettingsOpen) {
+            fetch(`${API_URL}/users`)
+                .then(r => r.json())
+                .then(data => {
+                    if (Array.isArray(data) && data.length > 0) {
+                        setUserList(data);
+                        if (authUser?.username) setEditTargetUser(authUser.username);
+                    }
+                })
+                .catch(() => {});
+        }
+    }, [isAdminSettingsOpen, authUser]);
+
+    const handleUpdateUserCredentials = async (e) => {
+        e.preventDefault();
+        if (editNewPassword && editNewPassword !== editConfirmPassword) {
+            Swal.fire({ icon: 'error', title: 'รหัสผ่านไม่ตรงกัน', text: 'กรุณากรอกรหัสผ่านและยืนยันรหัสผ่านให้ตรงกัน' });
+            return;
+        }
+
+        if (!editNewUsername && !editNewPassword) {
+            Swal.fire({ icon: 'info', title: 'ไม่มีการเปลี่ยนแปลง', text: 'กรุณากรอกชื่อผู้ใช้ใหม่ หรือ รหัสผ่านใหม่ที่ต้องการเปลี่ยน' });
+            return;
+        }
+
+        setIsSavingUser(true);
+        try {
+            const res = await fetch(`${API_URL}/users/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    targetUsername: editTargetUser,
+                    newUsername: editNewUsername.trim() || undefined,
+                    newPassword: editNewPassword.trim() || undefined
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                Swal.fire({ icon: 'success', title: 'บันทึกสำเร็จ!', text: data.message });
+                if (authUser && (authUser.username === editTargetUser || data.updatedUser?.id === authUser.id)) {
+                    const updated = { ...authUser, username: data.updatedUser.username };
+                    setAuthUser(updated);
+                    localStorage.setItem("nongkhaem_user", JSON.stringify(updated));
+                }
+                setEditNewUsername('');
+                setEditNewPassword('');
+                setEditConfirmPassword('');
+                fetch(`${API_URL}/users`).then(r => r.json()).then(d => Array.isArray(d) && setUserList(d));
+            } else {
+                Swal.fire({ icon: 'error', title: 'ข้อผิดพลาด', text: data.error || 'ไม่สามารถอัปเดตได้' });
+            }
+        } catch (err) {
+            Swal.fire({ icon: 'error', title: 'ข้อผิดพลาด', text: 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้' });
+        } finally {
+            setIsSavingUser(false);
+        }
+    };
 
     // Enterprise Features States
     const [weather, setWeather] = useState(null);
@@ -200,6 +301,7 @@ function App() {
 
     // Navigation
     const [navActive, setNavActive] = useState(false);
+    const [navDestination, setNavDestination] = useState(null);
     const [routeSummary, setRouteSummary] = useState('');
     const [routeInstructions, setRouteInstructions] = useState([]);
 
@@ -220,6 +322,28 @@ function App() {
     const heatLayerRef = useRef(null);
     const watchIdRef = useRef(null);
     const userMarkerRef = useRef(null);
+    const tempMarkerRef = useRef(null);
+
+    useEffect(() => {
+        if ((isFormOpen || isPickingMapLocation) && mapRef.current && formPoint.lat && formPoint.lng) {
+            if (!tempMarkerRef.current) {
+                const icon = L.divIcon({
+                    className: 'custom-map-marker',
+                    html: `<div class="marker-pin" style="background-color: #3b82f6; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px rgba(0,0,0,0.5);"><i class="fa-solid fa-thumbtack"></i></div>`,
+                    iconSize: [30, 42], iconAnchor: [15, 48]
+                });
+                tempMarkerRef.current = L.marker([formPoint.lat, formPoint.lng], { icon, zIndexOffset: 1000, draggable: true }).addTo(mapRef.current);
+                tempMarkerRef.current.on('dragend', (ev) => {
+                    const newLat = ev.target.getLatLng().lat;
+                    const newLng = ev.target.getLatLng().lng;
+                    setFormPoint(prev => ({ ...prev, lat: newLat, lng: newLng }));
+                });
+            }
+        } else if (!isFormOpen && !isPickingMapLocation && tempMarkerRef.current && mapRef.current) {
+            mapRef.current.removeLayer(tempMarkerRef.current);
+            tempMarkerRef.current = null;
+        }
+    }, [isFormOpen, isPickingMapLocation]);
 
     // --- Effects ---
 
@@ -329,6 +453,30 @@ function App() {
         setStats({ total, surveyed, pending, percent, circleOffset: circumference - (percent / 100) * circumference, withPhotos, withNotes, photoPercent, notesPercent, recentActivities });
     }, [surveyPoints]);
 
+    const fetchAddressFromCoordinates = async (lat, lng) => {
+        try {
+            const res = await fetch(`${API_URL}/geocode?lat=${lat}&lng=${lng}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.address && data.address !== 'ไม่พบที่อยู่') {
+                    return data.address;
+                }
+            }
+        } catch (err) {}
+
+        try {
+            const osmRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=th`);
+            if (osmRes.ok) {
+                const osmData = await osmRes.json();
+                if (osmData.display_name) {
+                    return osmData.display_name;
+                }
+            }
+        } catch (err) {}
+
+        return null;
+    };
+
     // Initialize Leaflet map
     useEffect(() => {
         const map = L.map("map", { zoomControl: false, maxZoom: 20 }).setView(NONG_KHAEM_CENTER, 14);
@@ -359,20 +507,66 @@ function App() {
         }).addTo(map);
 
         map.on("click", async (e) => {
-            if (!isAuthenticated) {
-                Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มจุดสำรวจได้' });
-                return;
-            }
+            // Allow anyone to add points
 
             const lat = e.latlng.lat;
             const lng = e.latlng.lng;
+
+            if (tempMarkerRef.current) {
+                map.removeLayer(tempMarkerRef.current);
+            }
+            const icon = L.divIcon({
+                className: 'custom-map-marker',
+                html: `<div class="marker-pin" style="background-color: #3b82f6; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px rgba(0,0,0,0.5);"><i class="fa-solid fa-thumbtack"></i></div>`,
+                iconSize: [30, 42], iconAnchor: [15, 48]
+            });
+            tempMarkerRef.current = L.marker([lat, lng], { icon, zIndexOffset: 1000, draggable: true }).addTo(map);
+
+            tempMarkerRef.current.on('dragend', async (ev) => {
+                const newLat = ev.target.getLatLng().lat;
+                const newLng = ev.target.getLatLng().lng;
+                setFormPoint(prev => ({ ...prev, lat: newLat, lng: newLng }));
+                
+                try {
+                    const res = await fetch(`${API_URL}/geocode?lat=${newLat}&lng=${newLng}`);
+                    const data = await res.json();
+                    if (data.address && data.address !== 'ไม่พบที่อยู่') {
+                        setFormPoint(prev => {
+                            if (prev.name === 'กำลังค้นหาที่อยู่...' || !prev.name) {
+                                return { ...prev, name: data.address };
+                            }
+                            if (!prev.notes.includes(data.address)) {
+                                const newNotes = prev.notes ? prev.notes + '\nที่อยู่: ' + data.address : 'ที่อยู่: ' + data.address;
+                                return { ...prev, notes: newNotes };
+                            }
+                            return prev;
+                        });
+                    }
+                } catch (err) {}
+            });
 
             if (isFormOpenRef.current) {
                 // Just update lat/lng if form is already open
                 setFormPoint(prev => ({ ...prev, lat, lng }));
             } else {
                 setFormPoint({ id: '', name: 'กำลังค้นหาที่อยู่...', status: 'surveyed', lat, lng, notes: '', date: new Date().toISOString().split('T')[0] });
-                setIsFormOpen(true);
+                
+                const popupContent = document.createElement('div');
+                popupContent.innerHTML = `
+                    <div style="text-align:center; padding: 2px;">
+                        <div style="margin-bottom: 8px; font-weight: 600; color: #1f2937; font-size: 13px;">ตำแหน่งที่เลือก</div>
+                        <button id="confirm-pin-btn" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: 'Prompt', sans-serif; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin: 0 auto; box-shadow: 0 2px 4px rgba(59,130,246,0.3);">
+                            <i class="fa-solid fa-thumbtack"></i> เพิ่มจุดสำรวจที่นี่
+                        </button>
+                    </div>
+                `;
+                
+                tempMarkerRef.current.bindPopup(popupContent, { closeButton: false, offset: L.point(0, -38) }).openPopup();
+                
+                popupContent.querySelector('#confirm-pin-btn').addEventListener('click', () => {
+                    setIsFormOpen(true);
+                    tempMarkerRef.current.closePopup();
+                });
             }
 
             // Reverse Geocoding
@@ -477,6 +671,7 @@ function App() {
         if (!mapRef.current) return;
         const startLatLng = userLocationRef.current || NONG_KHAEM_CENTER;
         const startLabel = userLocationRef.current ? "ตำแหน่งปัจจุบัน" : "จุดศูนย์กลางหนองแขม";
+        setNavDestination({ lat: destLat, lng: destLng, name: destName });
 
         if (routingControlRef.current) mapRef.current.removeControl(routingControlRef.current);
 
@@ -632,10 +827,7 @@ function App() {
     };
 
     const openSurveyForm = (id = null, lat = null, lng = null) => {
-        if (!isAuthenticated) {
-            Swal.fire({ icon: 'warning', title: 'กรุณาเข้าสู่ระบบ', text: 'คุณต้องเข้าสู่ระบบก่อนจึงจะเพิ่มหรือแก้ไขจุดสำรวจได้', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-            return;
-        }
+        // Allow anyone to add points
 
         setSelectedPhoto(null);
         setPhotoPreview(null);
@@ -654,6 +846,7 @@ function App() {
             routingControlRef.current = null;
         }
         setNavActive(false);
+        setNavDestination(null);
         setRouteSummary('');
         setRouteInstructions([]);
         if (mapRef.current) mapRef.current.setView(NONG_KHAEM_CENTER, 14);
@@ -867,25 +1060,7 @@ function App() {
     // CRUD (Connected to Backend)
     // ---------------------------------------------------------------------------
 
-    const exportToCSV = () => {
-        if (surveyPoints.length === 0) return Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ส่งออก', 'info');
-        const headers = ['ID', 'ชื่อจุดสำรวจ', 'สถานะ', 'ละติจูด', 'ลองจิจูด', 'บันทึก', 'วันที่'];
-        const csvContent = [
-            headers.join(','),
-            ...surveyPoints.map(p =>
-                `"${p.id}","${p.name}","${p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}","${p.lat}","${p.lng}","${p.notes ? p.notes.replace(/\n/g, ' ') : ''}","${p.date}"`
-            )
-        ].join('\n');
-
-        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `survey_data_${new Date().toISOString().split('T')[0]}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
+    // Export function removed, consolidated with exportData
 
     // ---------------------------------------------------------------------------
     // ---------------------------------------------------------------------------
@@ -893,11 +1068,14 @@ function App() {
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
+        if (isSubmitting) return;
+        
         if (!formPoint.name.trim()) {
-            Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'กรุณากรอกชื่อสถานที่สำรวจ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            Swal.fire({ icon: 'warning', title: 'แจ้งเตือน', text: 'กรุณากรอกชื่อสถานที่สำรวจ', background: 'var(--bg-modal)', color: 'var(--text-primary)' });
             return;
         }
 
+        setIsSubmitting(true);
         try {
             const isUpdate = !!formPoint.id;
             const method = isUpdate ? 'PUT' : 'POST';
@@ -942,15 +1120,20 @@ function App() {
                 if (isUpdate) {
                     setSurveyPoints(prev => prev.map(p => p.id === formPoint.id ? payload : p));
                 } else {
-                    setSurveyPoints(prev => [...prev, payload]);
+                    setSurveyPoints(prev => {
+                        if (prev.some(p => p.id === payload.id)) return prev;
+                        return [...prev, payload];
+                    });
                 }
-                Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'บันทึกข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                Swal.fire({ icon: 'success', title: 'สำเร็จ', text: 'บันทึกข้อมูลเรียบร้อย', timer: 1500, showConfirmButton: false, background: 'var(--bg-modal)', color: 'var(--text-primary)' });
                 setIsFormOpen(false);
             } else {
-                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'บันทึกข้อมูลไม่สำเร็จ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: 'บันทึกข้อมูลไม่สำเร็จ', background: 'var(--bg-modal)', color: 'var(--text-primary)' });
             }
         } catch (err) {
-            Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `บันทึกข้อมูลล้มเหลว: ${err.message}`, background: 'var(--card-bg)', color: 'var(--text-primary)' });
+            Swal.fire({ icon: 'error', title: 'ผิดพลาด', text: `บันทึกข้อมูลล้มเหลว: ${err.message}`, background: 'var(--bg-modal)', color: 'var(--text-primary)' });
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -1092,24 +1275,21 @@ function App() {
     // EXPORT / IMPORT (Backend connected)
     // ---------------------------------------------------------------------------
     const exportData = () => {
-        const headers = ["ID", "ชื่อสถานที่/บ้านเลขที่", "สถานะ", "ละติจูด", "ลองจิจูด", "บันทึกเพิ่มเติม", "วันที่"];
-        const rows = surveyPoints.map(p => [
-            p.id,
-            `"${(p.name || '').replace(/"/g, '""')}"`,
-            p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ',
-            p.lat,
-            p.lng,
-            `"${(p.notes || '').replace(/"/g, '""')}"`,
-            p.date
-        ]);
-        // \uFEFF for Excel UTF-8 BOM
-        const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        if (surveyPoints.length === 0) return Swal.fire('แจ้งเตือน', 'ไม่มีข้อมูลให้ส่งออก', 'info');
+        const data = surveyPoints.map(p => ({
+            "ID": p.id,
+            "ชื่อสถานที่/บ้านเลขที่": p.name || '',
+            "สถานะ": p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ได้สำรวจ',
+            "ละติจูด": p.lat,
+            "ลองจิจูด": p.lng,
+            "บันทึกเพิ่มเติม": p.notes || '',
+            "วันที่": p.date || ''
+        }));
+        
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Survey Data");
+        XLSX.writeFile(workbook, `nongkhaem_survey_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
     // Export PDF Report
@@ -1261,6 +1441,55 @@ function App() {
     // RENDER
     // ---------------------------------------------------------------------------
 
+    const processImageWithWatermark = (file) => {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    
+                    ctx.drawImage(img, 0, 0);
+                    
+                    const fontSize = Math.max(16, Math.floor(canvas.width * 0.04));
+                    ctx.font = `bold ${fontSize}px Prompt, sans-serif`;
+                    ctx.fillStyle = 'white';
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = Math.max(2, Math.floor(fontSize * 0.15));
+                    ctx.textAlign = 'right';
+                    
+                    const padding = fontSize;
+                    const lineSpacing = fontSize * 1.2;
+                    let currentY = canvas.height - padding - (lineSpacing * 2);
+                    const currentX = canvas.width - padding;
+                    
+                    const texts = [
+                        `Nong Khaem Survey Map`,
+                        `วันที่: ${formPoint.date || new Date().toISOString().split('T')[0]}`,
+                        `Lat: ${formPoint.lat?.toFixed(5) || '-'}, Lng: ${formPoint.lng?.toFixed(5) || '-'}`
+                    ];
+                    
+                    texts.forEach(text => {
+                        ctx.strokeText(text, currentX, currentY);
+                        ctx.fillText(text, currentX, currentY);
+                        currentY += lineSpacing;
+                    });
+                    
+                    canvas.toBlob((blob) => {
+                        const watermarkedFile = new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+                        resolve(watermarkedFile);
+                    }, 'image/jpeg', 0.85);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    };
+
     return (
         <div className="app-container">
 
@@ -1314,12 +1543,17 @@ function App() {
                     </div>
                 </div>
 
+
+
                 {/* Dashboard Button */}
                 <button className="btn btn-primary" onClick={() => setIsDashboardOpen(true)} style={{ marginLeft: '12px', padding: '6px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
-                    <i className="fa-solid fa-chart-pie"></i> สถิติ
+                    <i className="fa-solid fa-chart-pie"></i> <span className="btn-text">สถิติ</span>
                 </button>
-                <button className="btn" onClick={exportToCSV} style={{ marginLeft: "8px", padding: "6px 16px", borderRadius: "20px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "bold", background: "#10b981", color: "white", border: "none" }}>
-                    <i className="fa-solid fa-file-csv"></i> CSV
+                <button className="btn btn-primary" onClick={() => setIsDataTableOpen(true)} style={{ marginLeft: '8px', padding: '6px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold', background: '#3b82f6' }}>
+                    <i className="fa-solid fa-table"></i> <span className="btn-text">จัดการข้อมูล</span>
+                </button>
+                <button className="btn" onClick={exportData} style={{ marginLeft: "8px", padding: "6px 16px", borderRadius: "20px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "bold", background: "#10b981", color: "white", border: "none" }}>
+                    <i className="fa-solid fa-file-excel"></i> <span className="btn-text">Excel</span>
                 </button>
 
                 <div className="topbar-divider"></div>
@@ -1391,48 +1625,169 @@ function App() {
                 <div style={{ flex: 1 }}></div>
 
                 {/* Action buttons */}
-                <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px', border: '1px solid var(--border-color)' }}>
-                        <button className="btn" onClick={exportData} title="ดาวน์โหลดตารางข้อมูล (CSV)" style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.1)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                            <i className="fa-solid fa-file-csv text-green" style={{ fontSize: '16px' }}></i> โหลด CSV
+                <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', display: 'flex', gap: '4px', border: '1px solid var(--border-color)' }}>
+                            <button className="btn" onClick={exportData} title="ดาวน์โหลดตารางข้อมูล (Excel)" style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.1)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                <i className="fa-solid fa-file-excel text-green" style={{ fontSize: '16px' }}></i> <span className="btn-text">โหลด Excel</span>
+                            </button>
+                            <div style={{ width: '1px', background: 'var(--border-color)', margin: '4px 0' }}></div>
+                            <button className="btn" onClick={exportAllToPDF} title="สร้างรายงานสรุปทั้งหมด (PDF)" style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                <i className="fa-solid fa-file-pdf text-red" style={{ fontSize: '16px' }}></i> <span className="btn-text">โหลด PDF</span>
+                            </button>
+                        </div>
+
+                        <button className="icon-btn" onClick={() => fileInputRef.current.click()} title="นำเข้าข้อมูล (JSON/CSV)">
+                            <i className="fa-solid fa-file-import"></i>
+                            <span className="icon-btn-tooltip">นำเข้าข้อมูล</span>
                         </button>
-                        <div style={{ width: '1px', background: 'var(--border-color)', margin: '4px 0' }}></div>
-                        <button className="btn" onClick={exportAllToPDF} title="สร้างรายงานสรุปทั้งหมด (PDF)" style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
-                            <i className="fa-solid fa-file-pdf text-red" style={{ fontSize: '16px' }}></i> โหลด PDF
+
+                        <button className="icon-btn" onClick={() => setListOpen(o => !o)} title="เปิดแถบรายชื่อจุดสำรวจ">
+                            <i className="fa-solid fa-list-ul"></i>
+                            <span className="icon-btn-tooltip">รายการจุดสำรวจ</span>
+                        </button>
+
+                        <button className="icon-btn primary" onClick={() => { const c = mapRef.current?.getCenter(); openSurveyForm(null, c?.lat, c?.lng); }} title="เพิ่มจุดสำรวจใหม่" style={{ marginLeft: '4px', background: 'var(--primary)', color: 'white' }}>
+                            <i className="fa-solid fa-plus"></i>
+                            <span className="icon-btn-tooltip">เพิ่มจุดสำรวจ</span>
                         </button>
                     </div>
 
-                    <button className="icon-btn" onClick={() => fileInputRef.current.click()} title="นำเข้าข้อมูล (JSON/CSV)">
-                        <i className="fa-solid fa-file-import"></i>
-                        <span className="icon-btn-tooltip">นำเข้าข้อมูล</span>
-                    </button>
-
-                    <button className="icon-btn" onClick={() => setListOpen(o => !o)} title="เปิดแถบรายชื่อจุดสำรวจ">
-                        <i className="fa-solid fa-list-ul"></i>
-                        <span className="icon-btn-tooltip">รายการจุดสำรวจ</span>
-                    </button>
-
-                    <button className="icon-btn primary" onClick={() => { const c = mapRef.current?.getCenter(); openSurveyForm(null, c?.lat, c?.lng); }} title="เพิ่มจุดสำรวจใหม่" style={{ marginLeft: '8px', background: 'var(--primary)', color: 'white' }}>
-                        <i className="fa-solid fa-plus"></i>
-                        <span className="icon-btn-tooltip">เพิ่มจุดสำรวจ</span>
-                    </button>
-
-                    <div className="topbar-divider"></div>
-
-                    {isAuthenticated ? (
-                        <>
-                            <div style={{ fontSize: 12, marginRight: 8, color: 'var(--text-secondary)' }}>
-                                <i className="fa-solid fa-user-circle"></i> {authUser?.username}
-                            </div>
-                            <button className="btn" onClick={handleLogout} title="ออกจากระบบ" style={{ background: '#ef4444', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 8, cursor: 'pointer', border: 'none', transition: 'all 0.2s' }} onMouseOver={e => e.currentTarget.style.background = '#dc2626'} onMouseOut={e => e.currentTarget.style.background = '#ef4444'}>
-                                <i className="fa-solid fa-arrow-right-from-bracket"></i> ออกจากระบบ
+                    {/* User info and Logout positioned at far right */}
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* Sandbox Role Switcher */}
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                            borderRadius: '20px',
+                            padding: '2px 4px',
+                            fontSize: '12px',
+                            gap: '2px'
+                        }} title="Sandbox Role Switcher (สลับสิทธิ์ทดสอบระบบแบบ Real-time)">
+                            <span style={{ fontSize: '11px', padding: '0 6px', color: '#60a5fa', fontWeight: 'bold' }}>🧪 Sandbox:</span>
+                            <button
+                                onClick={() => setSandboxRole('admin')}
+                                style={{
+                                    background: isAdmin ? '#3b82f6' : 'transparent',
+                                    color: isAdmin ? 'white' : 'var(--text-secondary)',
+                                    border: 'none',
+                                    padding: '3px 8px',
+                                    borderRadius: '12px',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                🛡️ Admin
                             </button>
-                        </>
-                    ) : (
-                        <button className="btn" onClick={() => setShowLoginModal(true)} title="เข้าสู่ระบบ" style={{ background: 'var(--primary)', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 8, cursor: 'pointer', border: 'none' }}>
-                            <i className="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ
-                        </button>
-                    )}
+                            <button
+                                onClick={() => setSandboxRole('user')}
+                                style={{
+                                    background: isUserRole ? '#10b981' : 'transparent',
+                                    color: isUserRole ? 'white' : 'var(--text-secondary)',
+                                    border: 'none',
+                                    padding: '3px 8px',
+                                    borderRadius: '12px',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                👤 User
+                            </button>
+                        </div>
+
+                        {isAuthenticated ? (
+                            <>
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '5px 12px',
+                                    background: 'var(--bg-card)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '20px',
+                                    fontSize: '13px',
+                                    fontWeight: '600',
+                                    color: 'var(--text-primary)',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                                }}>
+                                    <i className={`fa-solid ${isAdmin ? 'fa-user-shield text-blue' : 'fa-user text-green'}`} style={{ color: isAdmin ? 'var(--primary)' : '#10b981', fontSize: '15px' }}></i>
+                                    <span>{authUser?.username}</span>
+                                    <span style={{
+                                        fontSize: '10px',
+                                        background: isAdmin ? 'var(--primary)' : '#10b981',
+                                        color: 'white',
+                                        padding: '1px 6px',
+                                        borderRadius: '10px',
+                                        marginLeft: '2px',
+                                        fontWeight: 'bold'
+                                    }}>
+                                        {isAdmin ? 'Admin' : 'User'}
+                                    </span>
+                                </div>
+
+                                {/* Admin Settings Button (Visible for Admin, Locked for User) */}
+                                {isAdmin ? (
+                                    <button
+                                        className="icon-btn"
+                                        onClick={() => setIsAdminSettingsOpen(true)}
+                                        title="ตั้งค่าระบบผู้ดูแล (Admin Settings)"
+                                        style={{
+                                            background: 'var(--bg-card)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '50%',
+                                            width: '34px',
+                                            height: '34px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'all 0.2s',
+                                            color: 'var(--text-primary)'
+                                        }}
+                                        onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card-hover)'}
+                                        onMouseOut={e => e.currentTarget.style.background = 'var(--bg-card)'}
+                                    >
+                                        <i className="fa-solid fa-gear" style={{ fontSize: '14px' }}></i>
+                                    </button>
+                                ) : (
+                                    <button
+                                        className="icon-btn"
+                                        onClick={() => Swal.fire({ icon: 'info', title: 'สำหรับ Admin เท่านั้น', text: 'สิทธิ์ระดับ User ไม่สามารถเข้าถึงการตั้งค่าระบบได้ (ทดสอบสลับ Role เป็น Admin ใน Sandbox เพื่อเข้าใช้งาน)' })}
+                                        title="ตั้งค่าระบบ (เฉพาะ Admin)"
+                                        style={{
+                                            background: 'var(--bg-card)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '50%',
+                                            width: '34px',
+                                            height: '34px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            opacity: 0.5,
+                                            color: 'var(--text-secondary)'
+                                        }}
+                                    >
+                                        <i className="fa-solid fa-lock" style={{ fontSize: '13px' }}></i>
+                                    </button>
+                                )}
+
+                                <button className="btn" onClick={handleLogout} title="ออกจากระบบ" style={{ background: '#ef4444', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', border: 'none', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(239, 68, 68, 0.25)' }} onMouseOver={e => e.currentTarget.style.background = '#dc2626'} onMouseOut={e => e.currentTarget.style.background = '#ef4444'}>
+                                    <i className="fa-solid fa-arrow-right-from-bracket"></i> <span className="btn-text">ออกจากระบบ</span>
+                                </button>
+                            </>
+                        ) : (
+                            <button className="btn" onClick={() => setShowLoginModal(true)} title="เข้าสู่ระบบ" style={{ background: 'var(--primary)', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', border: 'none' }}>
+                                <i className="fa-solid fa-right-to-bracket"></i> <span className="btn-text">เข้าสู่ระบบ</span>
+                            </button>
+                        )}
+                    </div>
 
                     <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".json" style={{ display: 'none' }} />
                 </div>
@@ -1510,15 +1865,23 @@ function App() {
                         <i className="fa-solid fa-satellite"></i>
                     </button>
                     <button
-                        className="map-ctrl-btn"
+                        className={`map-ctrl-btn ${isFollowing ? 'active' : ''}`}
                         onClick={() => {
-                            if (userLocationRef.current && mapRef.current) {
-                                mapRef.current.flyTo(userLocationRef.current, 18, { duration: 1.5 });
+                            if (!isFollowing) {
+                                setIsFollowing(true);
+                                if (userLocationRef.current && mapRef.current) {
+                                    mapRef.current.flyTo(userLocationRef.current, 18, { duration: 1.5 });
+                                    Swal.fire({ icon: 'success', title: 'เปิดระบบติดตาม', text: 'ล็อกเป้าหมาย! แผนที่จะเคลื่อนตามตำแหน่งของคุณ', background: 'var(--card-bg)', color: 'var(--text-primary)', timer: 2000, showConfirmButton: false });
+                                } else {
+                                    Swal.fire({ icon: 'info', title: 'เปิดระบบติดตาม', text: 'กำลังรอรับข้อมูล GPS ของคุณ...', background: 'var(--card-bg)', color: 'var(--text-primary)', timer: 2000, showConfirmButton: false });
+                                }
                             } else {
-                                Swal.fire({ icon: 'info', title: 'ไม่พบตำแหน่ง', text: 'กำลังรอรับข้อมูล GPS ของคุณ หรือเบราว์เซอร์ไม่รองรับ', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                                setIsFollowing(false);
+                                Swal.fire({ icon: 'info', title: 'ปิดระบบติดตาม', text: 'ยกเลิกการล็อกเป้าหมายแล้ว', background: 'var(--card-bg)', color: 'var(--text-primary)', timer: 1500, showConfirmButton: false });
                             }
                         }}
-                        title="ตำแหน่งของฉัน"
+                        title={isFollowing ? "ปิดโหมดติดตาม" : "ติดตามตำแหน่งของฉัน"}
+                        style={{ marginTop: '8px' }}
                     >
                         <i className="fa-solid fa-location-crosshairs"></i>
                     </button>
@@ -1604,9 +1967,19 @@ function App() {
                         <div className="nav-overlay-header">
                             <div className="nav-icon"><i className="fa-solid fa-route"></i></div>
                             <div className="nav-title-box">
-                                <h3>การนำทาง</h3>
+                                <h3>การนำทาง {navDestination && navDestination.name ? `ไป ${navDestination.name}` : ''}</h3>
                                 <p>{routeSummary}</p>
                             </div>
+                            {navDestination && (
+                                <a 
+                                    href={`https://www.google.com/maps/dir/?api=1&destination=${navDestination.lat},${navDestination.lng}`} 
+                                    target="_blank" 
+                                    className="nav-google-btn" 
+                                    title="เปิดใน Google Maps"
+                                >
+                                    <i className="fa-solid fa-map-location-dot"></i>
+                                </a>
+                            )}
                             <button className="nav-close-btn" onClick={cancelNavigation}>
                                 <i className="fa-solid fa-xmark"></i>
                             </button>
@@ -1637,6 +2010,8 @@ function App() {
                     <LoginScreen onLogin={handleLogin} />
                 </div>
             )}
+
+
 
             {/* ===== FORM MODAL ===== */}
             {isFormOpen && (
@@ -1685,11 +2060,12 @@ function App() {
                                         <label className="photo-upload-label" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100px', border: '2px dashed var(--border-color)', borderRadius: '8px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                                             <i className="fa-solid fa-camera" style={{ fontSize: '24px', marginBottom: '8px' }}></i>
                                             <span>แตะเพื่อถ่ายรูป หรือเลือกรูปภาพ</span>
-                                            <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={(e) => {
+                                            <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={async (e) => {
                                                 const file = e.target.files[0];
                                                 if (file) {
-                                                    setSelectedPhoto(file);
-                                                    setPhotoPreview(URL.createObjectURL(file));
+                                                    const watermarkedFile = await processImageWithWatermark(file);
+                                                    setSelectedPhoto(watermarkedFile);
+                                                    setPhotoPreview(URL.createObjectURL(watermarkedFile));
                                                 }
                                             }} />
                                         </label>
@@ -1700,14 +2076,52 @@ function App() {
                             <div className="form-row">
                                 <div className="form-group col">
                                     <label>ละติจูด</label>
-                                    <input type="number" value={formPoint.lat} readOnly />
+                                    <input type="number" value={formPoint.lat ?? ''} readOnly />
                                 </div>
                                 <div className="form-group col">
                                     <label>ลองจิจูด</label>
-                                    <input type="number" value={formPoint.lng} readOnly />
+                                    <input type="number" value={formPoint.lng ?? ''} readOnly />
                                 </div>
                             </div>
                             <p className="form-hint"><i className="fa-solid fa-info-circle"></i> คลิกบนแผนที่เพื่อย้ายพิกัด</p>
+                            <button
+                                type="button"
+                                className="btn"
+                                style={{ width: '100%', marginBottom: '16px', background: 'var(--primary-glow)', color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: '8px', padding: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+                                onClick={() => {
+                                    if (navigator.geolocation) {
+                                        navigator.geolocation.getCurrentPosition((pos) => {
+                                            const lat = pos.coords.latitude;
+                                            const lng = pos.coords.longitude;
+                                            setFormPoint(p => ({ ...p, lat, lng }));
+                                            if (mapRef.current) {
+                                                mapRef.current.flyTo([lat, lng], 18);
+                                            }
+                                            if (tempMarkerRef.current) {
+                                                tempMarkerRef.current.setLatLng([lat, lng]);
+                                            } else {
+                                                const icon = L.divIcon({
+                                                    className: 'custom-map-marker',
+                                                    html: `<div class="marker-pin" style="background-color: #3b82f6; border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 10px rgba(0,0,0,0.5);"><i class="fa-solid fa-thumbtack"></i></div>`,
+                                                    iconSize: [30, 42], iconAnchor: [15, 48]
+                                                });
+                                                tempMarkerRef.current = L.marker([lat, lng], { icon, zIndexOffset: 1000, draggable: true }).addTo(mapRef.current);
+                                                tempMarkerRef.current.on('dragend', async (ev) => {
+                                                    const newLat = ev.target.getLatLng().lat;
+                                                    const newLng = ev.target.getLatLng().lng;
+                                                    setFormPoint(prev => ({ ...prev, lat: newLat, lng: newLng }));
+                                                });
+                                            }
+                                        }, () => {
+                                            Swal.fire({ icon: 'error', title: 'ไม่สามารถดึงตำแหน่งได้', text: 'กรุณาอนุญาตการเข้าถึง GPS', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                                        }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+                                    } else {
+                                        Swal.fire({ icon: 'error', title: 'เบราว์เซอร์ไม่รองรับ GPS', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                                    }
+                                }}
+                            >
+                                <i className="fa-solid fa-location-crosshairs"></i> ใช้ตำแหน่งปัจจุบันของฉัน (GPS)
+                            </button>
                             <div className="form-group">
                                 <label>บันทึกเพิ่มเติม</label>
                                 <textarea rows="3" value={formPoint.notes} onChange={e => setFormPoint(p => ({ ...p, notes: e.target.value }))} placeholder="ข้อมูลปัญหา, ข้อเสนอแนะ..." maxLength="200" />
@@ -1717,8 +2131,14 @@ function App() {
                                 <input type="date" value={formPoint.date} onChange={e => setFormPoint(p => ({ ...p, date: e.target.value }))} />
                             </div>
                             <div className="modal-actions">
-                                <button type="button" className="btn btn-secondary" onClick={() => setIsFormOpen(false)}>ยกเลิก</button>
-                                <button type="submit" className="btn btn-primary">บันทึกข้อมูล</button>
+                                <button type="button" className="btn btn-secondary" onClick={() => setIsFormOpen(false)} disabled={isSubmitting}>ยกเลิก</button>
+                                <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                                    {isSubmitting ? (
+                                        <><i className="fa-solid fa-spinner fa-spin"></i> กำลังบันทึก...</>
+                                    ) : (
+                                        <>บันทึกข้อมูล</>
+                                    )}
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -1890,6 +2310,241 @@ function App() {
                                 ปิดหน้าต่างสรุปข้อมูล
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== ADMIN USER SETTINGS MODAL ===== */}
+            {/* ===== DATA TABLE MODAL ===== */}
+            {isDataTableOpen && (
+                <div className="modal-overlay" style={{ position: 'fixed', zIndex: 1050, padding: '20px' }}>
+                    <div style={{ background: 'var(--bg-modal)', width: '100%', maxWidth: '1200px', height: '90vh', borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
+                        <header style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-card)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ background: '#3b82f6', color: 'white', width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                                    <i className="fa-solid fa-table"></i>
+                                </div>
+                                <div>
+                                    <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '20px' }}>จัดการข้อมูลจุดสำรวจ</h2>
+                                    <p style={{ margin: '4px 0 0 0', color: 'var(--text-secondary)', fontSize: '13px' }}>ข้อมูลทั้งหมด {surveyPoints.length} รายการ</p>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <button className="btn btn-primary" onClick={() => openSurveyForm()} style={{ borderRadius: '8px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <i className="fa-solid fa-plus"></i> เพิ่มข้อมูล
+                                </button>
+                                <button className="btn" onClick={() => setIsDataTableOpen(false)} style={{ background: 'var(--bg-hover)', border: 'none', color: 'var(--text-primary)', width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    <i className="fa-solid fa-xmark" style={{ fontSize: '20px' }}></i>
+                                </button>
+                            </div>
+                        </header>
+                        
+                        <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '12px', background: 'var(--bg-card)' }}>
+                            <div className="search-box" style={{ flex: 1, maxWidth: '400px', position: 'relative' }}>
+                                <i className="fa-solid fa-search" style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}></i>
+                                <input 
+                                    type="text" 
+                                    placeholder="ค้นหาชื่อ, หมายเหตุ..." 
+                                    value={searchText}
+                                    onChange={e => setSearchText(e.target.value)}
+                                    style={{ width: '100%', padding: '10px 16px 10px 44px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}
+                                />
+                            </div>
+                            <select 
+                                value={activeFilter}
+                                onChange={e => setActiveFilter(e.target.value)}
+                                style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                            >
+                                <option value="all">ทั้งหมด</option>
+                                <option value="surveyed">สำรวจแล้ว</option>
+                                <option value="pending">ยังไม่สำรวจ</option>
+                            </select>
+                        </div>
+
+                        <div className="table-responsive" style={{ flex: 1, overflow: 'auto', padding: '0' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                                <thead style={{ position: 'sticky', top: 0, background: '#3b82f6', zIndex: 10, boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+                                    <tr>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>ID</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>รูปภาพ</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>สถานที่</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>สถานะ</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>วันที่</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>พิกัด (Lat, Lng)</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold' }}>หมายเหตุ</th>
+                                        <th style={{ padding: '16px', color: 'white', fontWeight: 'bold', textAlign: 'right' }}>จัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {listItems.length > 0 ? listItems.map(p => (
+                                        <tr key={p.id} style={{ borderBottom: '1px solid var(--border-color)', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-hover)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                            <td style={{ padding: '16px', color: 'var(--text-primary)', fontWeight: 'bold' }}>{p.id.replace('point-', '')}</td>
+                                            <td style={{ padding: '16px' }}>
+                                                {p.imageUrl ? (
+                                                    <a href={`${API_URL.replace('/api', '')}${p.imageUrl}`} target="_blank" rel="noreferrer">
+                                                        <img src={`${API_URL.replace('/api', '')}${p.imageUrl}`} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-color)' }} />
+                                                    </a>
+                                                ) : <div style={{ width: '50px', height: '50px', background: 'var(--bg-hover)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}><i className="fa-solid fa-image"></i></div>}
+                                            </td>
+                                            <td style={{ padding: '16px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{p.name}</td>
+                                            <td style={{ padding: '16px' }}>
+                                                <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold', background: p.status === 'surveyed' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: p.status === 'surveyed' ? '#10b981' : '#f59e0b' }}>
+                                                    {p.status === 'surveyed' ? 'สำรวจแล้ว' : 'ยังไม่ตรวจ'}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '16px', color: 'var(--text-primary)' }}>{p.date || '-'}</td>
+                                            <td style={{ padding: '16px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{p.lat.toFixed(5)}<br/>{p.lng.toFixed(5)}</td>
+                                            <td style={{ padding: '16px', color: 'var(--text-primary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes || '-'}</td>
+                                            <td style={{ padding: '16px', textAlign: 'right' }}>
+                                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                    <button onClick={() => openSurveyForm(p.id)} style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', border: 'none', width: '32px', height: '32px', borderRadius: '6px', cursor: 'pointer' }} title="แก้ไข">
+                                                        <i className="fa-solid fa-pen"></i>
+                                                    </button>
+                                                    <button onClick={() => deleteSurveyPoint(p.id)} style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: 'none', width: '32px', height: '32px', borderRadius: '6px', cursor: 'pointer' }} title="ลบ">
+                                                        <i className="fa-solid fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )) : (
+                                        <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>ไม่พบข้อมูลจุดสำรวจ</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {isAdminSettingsOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+                    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', width: '100%', maxWidth: '480px', overflow: 'hidden', boxShadow: '0 25px 30px -5px rgba(0, 0, 0, 0.4)' }}>
+                        <header style={{ padding: '16px 20px', background: 'var(--bg-card-hover)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, var(--primary), #818cf8)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                                    <i className="fa-solid fa-user-gear"></i>
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: 'var(--text-primary)' }}>ตั้งค่าผู้ใช้งาน (User Settings)</h3>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>สำหรับ Admin ปรับเปลี่ยนชื่อผู้ใช้ (Username) และ รหัสผ่าน (Password)</span>
+                                </div>
+                            </div>
+                            <button onClick={() => setIsAdminSettingsOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '18px', padding: '4px' }}>
+                                <i className="fa-solid fa-xmark"></i>
+                            </button>
+                        </header>
+
+                        <form onSubmit={handleUpdateUserCredentials} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            {/* User Selection */}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    <i className="fa-solid fa-users-gear" style={{ marginRight: '6px', color: 'var(--primary)' }}></i>
+                                    เลือกบัญชีผู้ใช้ที่ต้องการแก้ไข:
+                                </label>
+                                <select
+                                    value={editTargetUser}
+                                    onChange={e => {
+                                        setEditTargetUser(e.target.value);
+                                        setEditNewUsername('');
+                                        setEditNewPassword('');
+                                        setEditConfirmPassword('');
+                                    }}
+                                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card-hover)', color: 'var(--text-primary)', fontSize: '14px', cursor: 'pointer' }}
+                                >
+                                    {userList.length > 0 ? (
+                                        userList.map(u => (
+                                            <option key={u.id} value={u.username}>
+                                                👤 {u.username} ({u.role === 'admin' ? '🛡️ Admin' : 'ผู้ใช้งาน'})
+                                            </option>
+                                        ))
+                                    ) : (
+                                        <>
+                                            <option value="admin">🛡️ admin (Admin)</option>
+                                            <option value="user">👤 user (Standard User)</option>
+                                        </>
+                                    )}
+                                </select>
+                            </div>
+
+                            <div style={{ height: '1px', background: 'var(--border-color)', margin: '4px 0' }}></div>
+
+                            {/* New Username */}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    <i className="fa-solid fa-user-pen" style={{ marginRight: '6px', color: '#60a5fa' }}></i>
+                                    เปลี่ยนชื่อผู้ใช้งาน (Username ใหม่):
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder={`ชื่อผู้ใช้ปัจจุบัน: ${editTargetUser}`}
+                                    value={editNewUsername}
+                                    onChange={e => setEditNewUsername(e.target.value)}
+                                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '14px' }}
+                                />
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>* เว้นว่างไว้หากไม่ต้องการเปลี่ยนชื่อผู้ใช้</span>
+                            </div>
+
+                            {/* New Password */}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                    <i className="fa-solid fa-key" style={{ marginRight: '6px', color: '#f59e0b' }}></i>
+                                    เปลี่ยนรหัสผ่านใหม่ (Password):
+                                </label>
+                                <input
+                                    type="password"
+                                    placeholder="กรอกรหัสผ่านใหม่ที่ต้องการเปลี่ยน..."
+                                    value={editNewPassword}
+                                    onChange={e => setEditNewPassword(e.target.value)}
+                                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '14px' }}
+                                />
+                            </div>
+
+                            {/* Confirm Password */}
+                            {editNewPassword && (
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                        <i className="fa-solid fa-lock" style={{ marginRight: '6px', color: '#10b981' }}></i>
+                                        ยืนยันรหัสผ่านใหม่:
+                                    </label>
+                                    <input
+                                        type="password"
+                                        placeholder="ยืนยันรหัสผ่านใหม่อีกครั้ง..."
+                                        value={editConfirmPassword}
+                                        onChange={e => setEditConfirmPassword(e.target.value)}
+                                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: editConfirmPassword && editConfirmPassword !== editNewPassword ? '1px solid #ef4444' : '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '14px' }}
+                                    />
+                                    {editConfirmPassword && editConfirmPassword !== editNewPassword && (
+                                        <span style={{ fontSize: '11px', color: '#ef4444', marginTop: '4px', display: 'block' }}>⚠️ รหัสผ่านไม่ตรงกัน</span>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Submit Button */}
+                            <button
+                                type="submit"
+                                disabled={isSavingUser}
+                                style={{
+                                    marginTop: '8px',
+                                    padding: '12px',
+                                    borderRadius: '10px',
+                                    background: 'var(--primary)',
+                                    color: 'white',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: '14px',
+                                    fontWeight: 'bold',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '8px',
+                                    boxShadow: '0 4px 12px var(--primary-glow)',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                {isSavingUser ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-floppy-disk"></i>}
+                                บันทึกการเปลี่ยน Username & Password
+                            </button>
+                        </form>
                     </div>
                 </div>
             )}
