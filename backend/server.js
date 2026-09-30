@@ -25,8 +25,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'nongkhaem_secret_2026';
 app.use(cors());
 app.use(express.json());
 
-// Ensure uploads dir exists
-const uploadsDir = path.join(__dirname, 'uploads');
+// Ensure data and uploads dirs exist
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
+
+const uploadsDir = path.join(dataDir, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
 // Serve static uploaded files
@@ -43,7 +46,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Initialize SQLite database
-const dbPath = path.join(__dirname, 'database.sqlite');
+const dbPath = path.join(dataDir, 'database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error("Error opening database " + err.message);
