@@ -1,0 +1,10 @@
+{
+  "name": "project-end",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nong Khaem Survey Map - Fullstack Application",
+  "scripts": {
+    "build": "cd phanvadee-data-entry && npm install && npm run build && cd ../backend && npm install",
+    "start": "cd backend && node server.js"
+  }
+}
