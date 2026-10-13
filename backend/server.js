@@ -666,6 +666,6 @@ if (fs.existsSync(frontendPath)) {
     console.log("Frontend build not found. API only mode.");
 }
 
-server.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT} with WebSocket`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on http://0.0.0.0:${PORT} with WebSocket`);
 });
