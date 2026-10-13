@@ -184,7 +184,7 @@ function App() {
         Swal.fire({ icon: 'success', title: 'ออกจากระบบแล้ว', timer: 1500, showConfirmButton: false });
     };
 
-    const [showLoginModal, setShowLoginModal] = useState(false);
+    const [showLoginModal, setShowLoginModal] = useState(!isAuthenticated);
 
     // --- Data State ---
     const [surveyPoints, setSurveyPoints] = useState([]);
@@ -212,6 +212,16 @@ function App() {
     const [isDataTableOpen, setIsDataTableOpen] = useState(false);
     const [isAdminSettingsOpen, setIsAdminSettingsOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Storage & Backup Management State
+    const [isStorageModalOpen, setIsStorageModalOpen] = useState(false);
+    const [storageStats, setStorageStats] = useState(null);
+    const [isStorageLoading, setIsStorageLoading] = useState(false);
+    const [storageActiveTab, setStorageActiveTab] = useState('overview'); // overview, backup, restore, maintenance
+    const [isRestoring, setIsRestoring] = useState(false);
+    const [isCleaningUploads, setIsCleaningUploads] = useState(false);
+    const sqliteFileInputRef = useRef(null);
+    const jsonFileInputRef = useRef(null);
 
     // Sandbox Role State (null = use authUser role, 'admin' or 'user')
     const [sandboxRole, setSandboxRole] = useState(null);
@@ -249,26 +259,39 @@ function App() {
             return;
         }
 
-        if (!editNewUsername && !editNewPassword) {
+        if (editTargetUser === 'NEW_USER') {
+            if (!editNewUsername || !editNewPassword) {
+                Swal.fire({ icon: 'warning', title: 'ข้อมูลไม่ครบ', text: 'กรุณากรอกชื่อผู้ใช้งานและรหัสผ่านสำหรับผู้ใช้ใหม่' });
+                return;
+            }
+        } else if (!editNewUsername && !editNewPassword) {
             Swal.fire({ icon: 'info', title: 'ไม่มีการเปลี่ยนแปลง', text: 'กรุณากรอกชื่อผู้ใช้ใหม่ หรือ รหัสผ่านใหม่ที่ต้องการเปลี่ยน' });
             return;
         }
 
         setIsSavingUser(true);
         try {
-            const res = await fetch(`${API_URL}/users/update`, {
+            const isNewUser = editTargetUser === 'NEW_USER';
+            const endpoint = isNewUser ? `${API_URL}/register` : `${API_URL}/users/update`;
+            const payload = isNewUser ? {
+                username: editNewUsername.trim(),
+                password: editNewPassword.trim()
+            } : {
+                targetUsername: editTargetUser,
+                newUsername: editNewUsername.trim() || undefined,
+                newPassword: editNewPassword.trim() || undefined
+            };
+
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    targetUsername: editTargetUser,
-                    newUsername: editNewUsername.trim() || undefined,
-                    newPassword: editNewPassword.trim() || undefined
-                })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
+            
             if (data.success) {
-                Swal.fire({ icon: 'success', title: 'บันทึกสำเร็จ!', text: data.message });
-                if (authUser && (authUser.username === editTargetUser || data.updatedUser?.id === authUser.id)) {
+                Swal.fire({ icon: 'success', title: isNewUser ? 'เพิ่มผู้ใช้งานสำเร็จ!' : 'บันทึกสำเร็จ!', text: isNewUser ? 'เพิ่มผู้ใช้งานใหม่เรียบร้อยแล้ว' : data.message });
+                if (!isNewUser && authUser && (authUser.username === editTargetUser || data.updatedUser?.id === authUser.id)) {
                     const updated = { ...authUser, username: data.updatedUser.username };
                     setAuthUser(updated);
                     localStorage.setItem("nongkhaem_user", JSON.stringify(updated));
@@ -276,9 +299,13 @@ function App() {
                 setEditNewUsername('');
                 setEditNewPassword('');
                 setEditConfirmPassword('');
+                if (isNewUser) {
+                    setEditTargetUser('admin');
+                }
                 fetch(`${API_URL}/users`).then(r => r.json()).then(d => Array.isArray(d) && setUserList(d));
+                setIsAdminSettingsOpen(false);
             } else {
-                Swal.fire({ icon: 'error', title: 'ข้อผิดพลาด', text: data.error || 'ไม่สามารถอัปเดตได้' });
+                Swal.fire({ icon: 'error', title: 'ข้อผิดพลาด', text: data.error || 'ไม่สามารถทำรายการได้' });
             }
         } catch (err) {
             Swal.fire({ icon: 'error', title: 'ข้อผิดพลาด', text: 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้' });
@@ -386,33 +413,257 @@ function App() {
             setSurveyPoints(prev => prev.filter(p => p.id !== deletedId));
         });
 
+        socket.on('databaseRestored', () => {
+            fetchLocations();
+            fetchStorageStats();
+        });
+
         return () => {
             socket.disconnect();
         };
     }, []);
 
     // Fetch Data from Backend
-    useEffect(() => {
-        const fetchLocations = async () => {
-            try {
-                const headers = {};
-                if (isAuthenticated) headers['Authorization'] = `Bearer ${authToken}`;
+    const fetchLocations = async () => {
+        try {
+            const headers = {};
+            if (isAuthenticated) headers['Authorization'] = `Bearer ${authToken}`;
 
-                const res = await fetch(`${API_URL}/locations`, { headers });
+            const res = await fetch(`${API_URL}/locations`, { headers });
 
-                if (res.status === 401 || res.status === 403) {
-                    Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
-                    return handleLogout();
-                }
-                const data = await res.json();
-                setSurveyPoints(data);
-                setIsDataLoaded(true);
-            } catch (err) {
-                console.error("Error fetching locations:", err);
+            if (res.status === 401 || res.status === 403) {
+                Swal.fire({ icon: 'error', title: 'เซสชันหมดอายุ', text: 'กรุณาเข้าสู่ระบบใหม่', background: 'var(--card-bg)', color: 'var(--text-primary)' });
+                return handleLogout();
             }
-        };
+            const data = await res.json();
+            setSurveyPoints(data);
+            setIsDataLoaded(true);
+        } catch (err) {
+            console.error("Error fetching locations:", err);
+        }
+    };
+
+    useEffect(() => {
         fetchLocations();
     }, [isAuthenticated, authToken]);
+
+    // Storage Management Functions
+    const fetchStorageStats = async () => {
+        setIsStorageLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/storage/stats`);
+            if (res.ok) {
+                const data = await res.json();
+                setStorageStats(data);
+            }
+        } catch (err) {
+            console.error("Failed to fetch storage stats:", err);
+        } finally {
+            setIsStorageLoading(false);
+        }
+    };
+
+    const handleDownloadSqliteBackup = () => {
+        window.open(`${API_URL}/storage/backup/sqlite`, '_blank');
+    };
+
+    const handleDownloadJsonBackup = () => {
+        window.open(`${API_URL}/storage/backup/json`, '_blank');
+    };
+
+    const handleRestoreSqlite = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+
+        const confirmRes = await Swal.fire({
+            icon: 'warning',
+            title: 'ยืนยันกู้คืนฐานข้อมูล SQLite?',
+            html: `
+                <div style="text-align: left; font-size: 14px; line-height: 1.6;">
+                    <p>คุณกำลังจะกู้คืนข้อมูลจากไฟล์: <b>${file.name}</b></p>
+                    <p style="color: #ef4444; font-weight: bold;">⚠️ การดำเนินการนี้จะแทนที่ฐานข้อมูลปัจจุบันทั้งหมดด้วยข้อมูลในไฟล์นี้</p>
+                    <p style="color: var(--text-secondary); font-size: 12px;">(ระบบจะทำสำเนาไฟล์เดิมไว้เป็น .bak ให้อัตโนมัติเพื่อความปลอดภัย)</p>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'กู้คืนทันที',
+            cancelButtonText: 'ยกเลิก',
+            confirmButtonColor: '#ef4444',
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+
+        if (!confirmRes.isConfirmed) return;
+
+        setIsRestoring(true);
+        Swal.fire({
+            title: 'กำลังกู้คืนฐานข้อมูล...',
+            text: 'กรุณารอสักครู่ ห้ามปิดหน้าต่างนี้',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading(),
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+
+        try {
+            const formData = new FormData();
+            formData.append('databaseFile', file);
+
+            const headers = {};
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+            const res = await fetch(`${API_URL}/storage/restore/sqlite`, {
+                method: 'POST',
+                headers,
+                body: formData
+            });
+
+            const data = await res.json();
+            if (res.ok && data.success) {
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'กู้คืนฐานข้อมูลสำเร็จ!',
+                    text: data.message || 'ข้อมูลในระบบได้รับการอัปเดตเรียบร้อยแล้ว',
+                    background: 'var(--card-bg)',
+                    color: 'var(--text-primary)'
+                });
+                fetchLocations();
+                fetchStorageStats();
+            } else {
+                throw new Error(data.error || 'การกู้คืนล้มเหลว');
+            }
+        } catch (err) {
+            Swal.fire({
+                icon: 'error',
+                title: 'กู้คืนล้มเหลว',
+                text: err.message,
+                background: 'var(--card-bg)',
+                color: 'var(--text-primary)'
+            });
+        } finally {
+            setIsRestoring(false);
+        }
+    };
+
+    const handleRestoreJson = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+
+        const confirmRes = await Swal.fire({
+            icon: 'warning',
+            title: 'ยืนยันกู้คืนข้อมูลจาก JSON?',
+            text: `การนำเข้าจากไฟล์ ${file.name} จะแทนที่ข้อมูลจุดสำรวจทั้งหมดในปัจจุบัน`,
+            showCancelButton: true,
+            confirmButtonText: 'นำเข้าข้อมูล',
+            cancelButtonText: 'ยกเลิก',
+            confirmButtonColor: '#3b82f6',
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+
+        if (!confirmRes.isConfirmed) return;
+
+        setIsRestoring(true);
+        Swal.fire({
+            title: 'กำลังนำเข้าข้อมูล...',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading(),
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+
+        try {
+            const fileText = await file.text();
+            const jsonData = JSON.parse(fileText);
+
+            const headers = { 'Content-Type': 'application/json' };
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+            const res = await fetch(`${API_URL}/storage/restore/json`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(jsonData)
+            });
+
+            const data = await res.json();
+            if (res.ok && data.success) {
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'นำเข้าสำเร็จ!',
+                    text: data.message || 'บันทึกข้อมูลเรียบร้อยแล้ว',
+                    background: 'var(--card-bg)',
+                    color: 'var(--text-primary)'
+                });
+                fetchLocations();
+                fetchStorageStats();
+            } else {
+                throw new Error(data.error || 'การนำเข้าล้มเหลว');
+            }
+        } catch (err) {
+            Swal.fire({
+                icon: 'error',
+                title: 'นำเข้าข้อมูลล้มเหลว',
+                text: err.message,
+                background: 'var(--card-bg)',
+                color: 'var(--text-primary)'
+            });
+        } finally {
+            setIsRestoring(false);
+        }
+    };
+
+    const handleCleanUploads = async () => {
+        const confirmRes = await Swal.fire({
+            icon: 'question',
+            title: 'ล้างไฟล์รูปภาพที่ไม่ถูกใช้งาน?',
+            text: 'ระบบจะลบไฟล์รูปภาพในโฟลเดอร์ uploads ที่ไม่ได้เชื่อมโยงกับจุดสำรวจใดๆ ในฐานข้อมูล เพื่อประหยัดพื้นที่จัดเก็บ',
+            showCancelButton: true,
+            confirmButtonText: 'เริ่มล้างไฟล์',
+            cancelButtonText: 'ยกเลิก',
+            confirmButtonColor: '#f59e0b',
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)'
+        });
+
+        if (!confirmRes.isConfirmed) return;
+
+        setIsCleaningUploads(true);
+        try {
+            const headers = {};
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+            const res = await fetch(`${API_URL}/storage/clean-uploads`, {
+                method: 'POST',
+                headers
+            });
+
+            const data = await res.json();
+            if (res.ok && data.success) {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'ล้างไฟล์สำเร็จ',
+                    text: data.message,
+                    background: 'var(--card-bg)',
+                    color: 'var(--text-primary)'
+                });
+                fetchStorageStats();
+            } else {
+                throw new Error(data.error || 'ไม่สามารถล้างไฟล์ได้');
+            }
+        } catch (err) {
+            Swal.fire({
+                icon: 'error',
+                title: 'เกิดข้อผิดพลาด',
+                text: err.message,
+                background: 'var(--card-bg)',
+                color: 'var(--text-primary)'
+            });
+        } finally {
+            setIsCleaningUploads(false);
+        }
+    };
 
     // Theme & Map Layer Update
     useEffect(() => {
@@ -1555,6 +1806,27 @@ function App() {
                 <button className="btn" onClick={exportData} style={{ marginLeft: "8px", padding: "6px 16px", borderRadius: "20px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "bold", background: "#10b981", color: "white", border: "none" }}>
                     <i className="fa-solid fa-file-excel"></i> <span className="btn-text">Excel</span>
                 </button>
+                <button 
+                    className="btn" 
+                    onClick={() => { setIsStorageModalOpen(true); fetchStorageStats(); }} 
+                    style={{ 
+                        marginLeft: "8px", 
+                        padding: "6px 16px", 
+                        borderRadius: "20px", 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "6px", 
+                        fontWeight: "bold", 
+                        background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)", 
+                        color: "white", 
+                        border: "none", 
+                        boxShadow: "0 2px 8px rgba(99, 102, 241, 0.35)", 
+                        cursor: "pointer" 
+                    }} 
+                    title="จัดการที่เก็บข้อมูล สำรองฐานข้อมูล และกู้คืนข้อมูล"
+                >
+                    <i className="fa-solid fa-database"></i> <span className="btn-text">ที่เก็บข้อมูล</span>
+                </button>
 
                 <div className="topbar-divider"></div>
 
@@ -2451,6 +2723,7 @@ function App() {
                                     }}
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card-hover)', color: 'var(--text-primary)', fontSize: '14px', cursor: 'pointer' }}
                                 >
+                                    <option value="NEW_USER">➕ --- สร้างผู้ใช้งานใหม่ ---</option>
                                     {userList.length > 0 ? (
                                         userList.map(u => (
                                             <option key={u.id} value={u.username}>
@@ -2472,27 +2745,27 @@ function App() {
                             <div>
                                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                     <i className="fa-solid fa-user-pen" style={{ marginRight: '6px', color: '#60a5fa' }}></i>
-                                    เปลี่ยนชื่อผู้ใช้งาน (Username ใหม่):
+                                    {editTargetUser === 'NEW_USER' ? 'ชื่อผู้ใช้งาน (Username):' : 'เปลี่ยนชื่อผู้ใช้งาน (Username ใหม่):'}
                                 </label>
                                 <input
                                     type="text"
-                                    placeholder={`ชื่อผู้ใช้ปัจจุบัน: ${editTargetUser}`}
+                                    placeholder={editTargetUser === 'NEW_USER' ? 'ตั้งชื่อผู้ใช้งานใหม่...' : `ชื่อผู้ใช้ปัจจุบัน: ${editTargetUser}`}
                                     value={editNewUsername}
                                     onChange={e => setEditNewUsername(e.target.value)}
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '14px' }}
                                 />
-                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>* เว้นว่างไว้หากไม่ต้องการเปลี่ยนชื่อผู้ใช้</span>
+                                {editTargetUser !== 'NEW_USER' && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>* เว้นว่างไว้หากไม่ต้องการเปลี่ยนชื่อผู้ใช้</span>}
                             </div>
 
                             {/* New Password */}
                             <div>
                                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                     <i className="fa-solid fa-key" style={{ marginRight: '6px', color: '#f59e0b' }}></i>
-                                    เปลี่ยนรหัสผ่านใหม่ (Password):
+                                    {editTargetUser === 'NEW_USER' ? 'รหัสผ่าน (Password):' : 'เปลี่ยนรหัสผ่านใหม่ (Password):'}
                                 </label>
                                 <input
                                     type="password"
-                                    placeholder="กรอกรหัสผ่านใหม่ที่ต้องการเปลี่ยน..."
+                                    placeholder={editTargetUser === 'NEW_USER' ? 'ตั้งรหัสผ่านใหม่...' : 'กรอกรหัสผ่านใหม่ที่ต้องการเปลี่ยน...'}
                                     value={editNewPassword}
                                     onChange={e => setEditNewPassword(e.target.value)}
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '14px' }}
@@ -2500,15 +2773,15 @@ function App() {
                             </div>
 
                             {/* Confirm Password */}
-                            {editNewPassword && (
+                            {(editTargetUser === 'NEW_USER' || editNewPassword) && (
                                 <div>
                                     <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>
                                         <i className="fa-solid fa-lock" style={{ marginRight: '6px', color: '#10b981' }}></i>
-                                        ยืนยันรหัสผ่านใหม่:
+                                        {editTargetUser === 'NEW_USER' ? 'ยืนยันรหัสผ่าน:' : 'ยืนยันรหัสผ่านใหม่:'}
                                     </label>
                                     <input
                                         type="password"
-                                        placeholder="ยืนยันรหัสผ่านใหม่อีกครั้ง..."
+                                        placeholder={editTargetUser === 'NEW_USER' ? 'ยืนยันรหัสผ่านอีกครั้ง...' : 'ยืนยันรหัสผ่านใหม่อีกครั้ง...'}
                                         value={editConfirmPassword}
                                         onChange={e => setEditConfirmPassword(e.target.value)}
                                         style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: editConfirmPassword && editConfirmPassword !== editNewPassword ? '1px solid #ef4444' : '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '14px' }}
@@ -2542,9 +2815,814 @@ function App() {
                                 }}
                             >
                                 {isSavingUser ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-floppy-disk"></i>}
-                                บันทึกการเปลี่ยน Username & Password
+                                {editTargetUser === 'NEW_USER' ? 'เพิ่มผู้ใช้งานใหม่' : 'บันทึกการเปลี่ยน Username & Password'}
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== DATA STORAGE & BACKUP MANAGEMENT MODAL ===== */}
+            {isStorageModalOpen && (
+                <div className="modal-overlay" style={{ position: 'fixed', zIndex: 1060, padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', inset: 0, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)' }}>
+                    <div style={{
+                        background: 'var(--bg-modal)',
+                        width: '100%',
+                        maxWidth: '980px',
+                        maxHeight: '92vh',
+                        borderRadius: '20px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
+                        border: '1px solid var(--border-color)',
+                        animation: 'modalScaleUp 0.25s ease'
+                    }}>
+                        {/* Modal Header */}
+                        <header style={{
+                            padding: '18px 24px',
+                            borderBottom: '1px solid var(--border-color)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: 'var(--bg-card)'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                                    color: 'white',
+                                    width: '44px',
+                                    height: '44px',
+                                    borderRadius: '12px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '20px',
+                                    boxShadow: '0 4px 15px rgba(99, 102, 241, 0.4)'
+                                }}>
+                                    <i className="fa-solid fa-database"></i>
+                                </div>
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '19px', fontWeight: 'bold' }}>
+                                            คลังและที่เก็บข้อมูล (Data Storage & Backup)
+                                        </h2>
+                                        <span style={{
+                                            fontSize: '11px',
+                                            background: 'rgba(16, 185, 129, 0.15)',
+                                            color: '#10b981',
+                                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '5px',
+                                            fontWeight: '600'
+                                        }}>
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
+                                            SQLite 3
+                                        </span>
+                                    </div>
+                                    <p style={{ margin: '3px 0 0 0', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                                        ตรวจสอบพื้นที่จัดเก็บ สำรองฐานข้อมูลฉบับเต็ม และกู้คืนข้อมูลระบบสำรวจหนองแขม
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <button
+                                    onClick={fetchStorageStats}
+                                    disabled={isStorageLoading}
+                                    title="รีเฟรชข้อมูลพื้นที่"
+                                    style={{
+                                        background: 'var(--bg-card-hover)',
+                                        border: '1px solid var(--border-color)',
+                                        color: 'var(--text-primary)',
+                                        padding: '7px 14px',
+                                        borderRadius: '10px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: '600',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    <i className={`fa-solid fa-arrows-rotate ${isStorageLoading ? 'fa-spin' : ''}`} style={{ color: '#8b5cf6' }}></i>
+                                    <span>รีเฟรช</span>
+                                </button>
+                                <button
+                                    className="btn"
+                                    onClick={() => setIsStorageModalOpen(false)}
+                                    style={{
+                                        background: 'var(--bg-hover)',
+                                        border: 'none',
+                                        color: 'var(--text-primary)',
+                                        width: '38px',
+                                        height: '38px',
+                                        borderRadius: '50%',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <i className="fa-solid fa-xmark" style={{ fontSize: '18px' }}></i>
+                                </button>
+                            </div>
+                        </header>
+
+                        {/* Navigation Tabs */}
+                        <div style={{
+                            display: 'flex',
+                            gap: '8px',
+                            padding: '10px 24px',
+                            borderBottom: '1px solid var(--border-color)',
+                            background: 'var(--bg-card)',
+                            overflowX: 'auto'
+                        }}>
+                            {[
+                                { id: 'overview', label: 'ภาพรวมพื้นที่จัดเก็บ', icon: 'fa-solid fa-chart-pie', color: '#8b5cf6' },
+                                { id: 'backup', label: 'สำรองและดาวน์โหลด (Backup)', icon: 'fa-solid fa-download', color: '#10b981' },
+                                { id: 'restore', label: 'กู้คืนข้อมูล (Restore)', icon: 'fa-solid fa-upload', color: '#3b82f6' },
+                                { id: 'maintenance', label: 'บำรุงรักษาพื้นที่ (Maintenance)', icon: 'fa-solid fa-broom', color: '#f59e0b' }
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setStorageActiveTab(tab.id)}
+                                    style={{
+                                        padding: '7px 15px',
+                                        borderRadius: '10px',
+                                        border: 'none',
+                                        background: storageActiveTab === tab.id ? tab.color : 'transparent',
+                                        color: storageActiveTab === tab.id ? 'white' : 'var(--text-secondary)',
+                                        fontWeight: storageActiveTab === tab.id ? 'bold' : '600',
+                                        fontSize: '13px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '7px',
+                                        transition: 'all 0.2s',
+                                        boxShadow: storageActiveTab === tab.id ? `0 4px 12px ${tab.color}40` : 'none'
+                                    }}
+                                >
+                                    <i className={tab.icon}></i>
+                                    <span>{tab.label}</span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Modal Body */}
+                        <div style={{ flex: 1, overflowY: 'auto', padding: '22px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                            {isStorageLoading && !storageStats ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '14px' }}>
+                                    <i className="fa-solid fa-circle-notch fa-spin" style={{ fontSize: '32px', color: '#8b5cf6' }}></i>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>กำลังโหลดข้อมูลพื้นที่จัดเก็บ...</span>
+                                </div>
+                            ) : (
+                                <>
+                                    {/* TAB 1: OVERVIEW */}
+                                    {storageActiveTab === 'overview' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                                            {/* System Status Banner */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                borderRadius: '14px',
+                                                padding: '16px 20px',
+                                                border: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                flexWrap: 'wrap',
+                                                gap: '14px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                                    <div style={{
+                                                        width: '42px',
+                                                        height: '42px',
+                                                        borderRadius: '12px',
+                                                        background: 'rgba(16, 185, 129, 0.12)',
+                                                        color: '#10b981',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        fontSize: '20px'
+                                                    }}>
+                                                        <i className="fa-solid fa-server"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            ฐานข้อมูลทำงานปกติ (SQLite Database)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                                            ที่อยู่ไฟล์: <code>backend/data/database.sqlite</code> | เซิร์ฟเวอร์เปิดใช้งานมาแล้ว {Math.floor((storageStats?.server?.uptimeSeconds || 0) / 60)} นาที
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                    <span style={{
+                                                        background: 'rgba(59, 130, 246, 0.1)',
+                                                        color: '#60a5fa',
+                                                        padding: '4px 10px',
+                                                        borderRadius: '8px',
+                                                        fontSize: '12px',
+                                                        fontWeight: '600',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px'
+                                                    }}>
+                                                        <i className="fa-brands fa-node-js"></i> {storageStats?.server?.nodeVersion || 'Node.js'}
+                                                    </span>
+                                                    <span style={{
+                                                        background: 'rgba(16, 185, 129, 0.1)',
+                                                        color: '#10b981',
+                                                        padding: '4px 10px',
+                                                        borderRadius: '8px',
+                                                        fontSize: '12px',
+                                                        fontWeight: '600'
+                                                    }}>
+                                                        🟢 เชื่อมต่ออยู่
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* 4 Metric Stat Cards */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+                                                {/* Card 1: DB Size */}
+                                                <div style={{
+                                                    background: 'var(--bg-card)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: '14px',
+                                                    padding: '16px',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '8px'
+                                                }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>ขนาดฐานข้อมูล</span>
+                                                        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                            <i className="fa-solid fa-database"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                                                        {storageStats?.database?.formattedSize || '0 B'}
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                                        SQLite 3 Database File
+                                                    </div>
+                                                </div>
+
+                                                {/* Card 2: Uploads Storage */}
+                                                <div style={{
+                                                    background: 'var(--bg-card)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: '14px',
+                                                    padding: '16px',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '8px'
+                                                }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>คลังภาพถ่ายสำรวจ</span>
+                                                        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                            <i className="fa-solid fa-images"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                                                        {storageStats?.uploads?.formattedSize || '0 B'}
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                                        {storageStats?.uploads?.count || 0} ไฟล์รูปภาพในระบบ
+                                                    </div>
+                                                </div>
+
+                                                {/* Card 3: Locations Count */}
+                                                <div style={{
+                                                    background: 'var(--bg-card)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: '14px',
+                                                    padding: '16px',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '8px'
+                                                }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>จุดสำรวจทั้งหมด</span>
+                                                        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                            <i className="fa-solid fa-map-pin"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                                                        {storageStats?.records?.totalLocations || 0} <span style={{ fontSize: '14px', fontWeight: 'normal', color: 'var(--text-secondary)' }}>จุด</span>
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                                        สำรวจแล้ว: {storageStats?.records?.surveyed || 0} | ยังไม่ตรวจ: {storageStats?.records?.pending || 0}
+                                                    </div>
+                                                </div>
+
+                                                {/* Card 4: Users Count */}
+                                                <div style={{
+                                                    background: 'var(--bg-card)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: '14px',
+                                                    padding: '16px',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '8px'
+                                                }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>ผู้ใช้งานในระบบ</span>
+                                                        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                            <i className="fa-solid fa-users"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                                                        {storageStats?.records?.totalUsers || 0} <span style={{ fontSize: '14px', fontWeight: 'normal', color: 'var(--text-secondary)' }}>บัญชี</span>
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                                        Admin: {storageStats?.records?.adminUsers || 0} | User ทั่วไป: {storageStats?.records?.normalUsers || 0}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Quick Shortcuts */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                borderRadius: '14px',
+                                                padding: '18px',
+                                                border: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--text-primary)' }}>
+                                                    ⚡ การดำเนินการด่วน
+                                                </div>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                                                    <button
+                                                        onClick={handleDownloadSqliteBackup}
+                                                        style={{
+                                                            padding: '9px 16px',
+                                                            borderRadius: '10px',
+                                                            background: '#8b5cf6',
+                                                            color: 'white',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '8px',
+                                                            fontWeight: '600',
+                                                            fontSize: '13px',
+                                                            boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)'
+                                                        }}
+                                                    >
+                                                        <i className="fa-solid fa-download"></i> สำรองไฟล์ .sqlite ทันที
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setStorageActiveTab('restore')}
+                                                        style={{
+                                                            padding: '9px 16px',
+                                                            borderRadius: '10px',
+                                                            background: 'var(--bg-card-hover)',
+                                                            color: 'var(--text-primary)',
+                                                            border: '1px solid var(--border-color)',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '8px',
+                                                            fontWeight: '600',
+                                                            fontSize: '13px'
+                                                        }}
+                                                    >
+                                                        <i className="fa-solid fa-upload"></i> กู้คืนฐานข้อมูล
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setStorageActiveTab('maintenance')}
+                                                        style={{
+                                                            padding: '9px 16px',
+                                                            borderRadius: '10px',
+                                                            background: 'var(--bg-card-hover)',
+                                                            color: 'var(--text-primary)',
+                                                            border: '1px solid var(--border-color)',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '8px',
+                                                            fontWeight: '600',
+                                                            fontSize: '13px'
+                                                        }}
+                                                    >
+                                                        <i className="fa-solid fa-broom"></i> ล้างไฟล์ที่ไม่ใช้งาน
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* TAB 2: BACKUP & DOWNLOAD */}
+                                    {storageActiveTab === 'backup' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                                เลือกรูปแบบไฟล์สำรองที่ต้องการดาวน์โหลดเก็บไว้ในเครื่องของคุณ เพื่อป้องกันข้อมูลสูญหาย:
+                                            </div>
+
+                                            {/* Option 1: SQLite Backup */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '18px',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                flexWrap: 'wrap',
+                                                gap: '14px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                                                        <i className="fa-solid fa-database"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            ฐานข้อมูลฉบับสมบูรณ์ (Full SQLite Database)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                                                            ไฟล์ .sqlite ขนาด {storageStats?.database?.formattedSize || '24 KB'} บรรจุทุกตาราง (locations, users) สามารถนำไปเปิดดูหรือกู้คืนได้ 100%
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={handleDownloadSqliteBackup}
+                                                    style={{
+                                                        padding: '9px 18px',
+                                                        borderRadius: '10px',
+                                                        background: '#8b5cf6',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        fontWeight: 'bold',
+                                                        fontSize: '13px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)'
+                                                    }}
+                                                >
+                                                    <i className="fa-solid fa-download"></i> ดาวน์โหลด .sqlite
+                                                </button>
+                                            </div>
+
+                                            {/* Option 2: JSON Backup */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '18px',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                flexWrap: 'wrap',
+                                                gap: '14px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                                                        <i className="fa-solid fa-file-code"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            ส่งออกข้อมูลในรูปแบบ JSON (.json)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                                                            ไฟล์ JSON มาตรฐาน เหมาะสำหรับการส่งต่อข้อมูล วิเคราะห์ หรือนำเข้าฐานข้อมูลอื่นๆ
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={handleDownloadJsonBackup}
+                                                    style={{
+                                                        padding: '9px 18px',
+                                                        borderRadius: '10px',
+                                                        background: '#10b981',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        fontWeight: 'bold',
+                                                        fontSize: '13px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+                                                    }}
+                                                >
+                                                    <i className="fa-solid fa-download"></i> ดาวน์โหลด .json
+                                                </button>
+                                            </div>
+
+                                            {/* Option 3: Excel Backup */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '18px',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                flexWrap: 'wrap',
+                                                gap: '14px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(34, 197, 94, 0.15)', color: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                                                        <i className="fa-solid fa-file-excel"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            รายงานตารางข้อมูล Excel (.xlsx)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                                                            ตารางสรุปจุดสำรวจครบทุกจุด แยกคอลัมน์พิกัด สถานะ วันที่ หมายเหตุ
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={exportData}
+                                                    style={{
+                                                        padding: '9px 18px',
+                                                        borderRadius: '10px',
+                                                        background: '#22c55e',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        fontWeight: 'bold',
+                                                        fontSize: '13px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        boxShadow: '0 4px 12px rgba(34, 197, 94, 0.3)'
+                                                    }}
+                                                >
+                                                    <i className="fa-solid fa-download"></i> ดาวน์โหลด Excel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* TAB 3: RESTORE & IMPORT */}
+                                    {storageActiveTab === 'restore' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                            <div style={{
+                                                background: 'rgba(239, 68, 68, 0.1)',
+                                                border: '1px solid rgba(239, 68, 68, 0.3)',
+                                                borderRadius: '12px',
+                                                padding: '12px 16px',
+                                                fontSize: '13px',
+                                                color: '#f87171',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '10px'
+                                            }}>
+                                                <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: '18px' }}></i>
+                                                <span>ข้อควรระวัง: การกู้คืนข้อมูลจะเขียนทับข้อมูลจุดสำรวจที่มีอยู่ในระบบ กรุณาสำรองข้อมูลก่อนเริ่มกู้คืน</span>
+                                            </div>
+
+                                            {/* Restore SQLite File */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '20px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                    <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '17px' }}>
+                                                        <i className="fa-solid fa-rotate-left"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            กู้คืนฐานข้อมูลจากไฟล์ SQLite (.sqlite / .db)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                            คืนค่าทั้งระบบกลับไปสู่สถานะตามไฟล์สำรองเดิม
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <input
+                                                    type="file"
+                                                    ref={sqliteFileInputRef}
+                                                    onChange={handleRestoreSqlite}
+                                                    accept=".sqlite,.db"
+                                                    style={{ display: 'none' }}
+                                                />
+
+                                                <button
+                                                    disabled={isRestoring}
+                                                    onClick={() => sqliteFileInputRef.current?.click()}
+                                                    style={{
+                                                        padding: '16px',
+                                                        borderRadius: '12px',
+                                                        border: '2px dashed #8b5cf6',
+                                                        background: 'rgba(139, 92, 246, 0.05)',
+                                                        color: '#8b5cf6',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '8px',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                    onMouseOver={e => e.currentTarget.style.background = 'rgba(139, 92, 246, 0.12)'}
+                                                    onMouseOut={e => e.currentTarget.style.background = 'rgba(139, 92, 246, 0.05)'}
+                                                >
+                                                    <i className="fa-solid fa-cloud-arrow-up" style={{ fontSize: '26px' }}></i>
+                                                    <span style={{ fontWeight: 'bold', fontSize: '14px' }}>คลิกเพื่อเลือกไฟล์ SQLite (.sqlite) ที่ต้องการกู้คืน</span>
+                                                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>รองรับไฟล์ .sqlite หรือ .db จากระบบสำรอง</span>
+                                                </button>
+                                            </div>
+
+                                            {/* Restore from JSON */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '20px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                    <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '17px' }}>
+                                                        <i className="fa-solid fa-file-import"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            กู้คืนข้อมูลจุดสำรวจจากไฟล์ JSON (.json)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                            นำเข้าจุดสำรวจจากไฟล์สำรอง JSON กลับสู่ระบบ
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <input
+                                                    type="file"
+                                                    ref={jsonFileInputRef}
+                                                    onChange={handleRestoreJson}
+                                                    accept=".json"
+                                                    style={{ display: 'none' }}
+                                                />
+
+                                                <button
+                                                    disabled={isRestoring}
+                                                    onClick={() => jsonFileInputRef.current?.click()}
+                                                    style={{
+                                                        padding: '16px',
+                                                        borderRadius: '12px',
+                                                        border: '2px dashed #3b82f6',
+                                                        background: 'rgba(59, 130, 246, 0.05)',
+                                                        color: '#3b82f6',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '8px',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                    onMouseOver={e => e.currentTarget.style.background = 'rgba(59, 130, 246, 0.12)'}
+                                                    onMouseOut={e => e.currentTarget.style.background = 'rgba(59, 130, 246, 0.05)'}
+                                                >
+                                                    <i className="fa-solid fa-file-arrow-up" style={{ fontSize: '26px' }}></i>
+                                                    <span style={{ fontWeight: 'bold', fontSize: '14px' }}>คลิกเพื่อเลือกไฟล์ JSON (.json)</span>
+                                                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>ไฟล์จะถูกนำเข้าและอัปเดตลงฐานข้อมูลทันที</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* TAB 4: MAINTENANCE */}
+                                    {storageActiveTab === 'maintenance' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                            {/* Clean Orphaned Images */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '18px',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                flexWrap: 'wrap',
+                                                gap: '14px'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                                                        <i className="fa-solid fa-broom"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-primary)' }}>
+                                                            ล้างไฟล์รูปภาพที่ไม่มีการใช้งาน (Orphaned Photos)
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                                                            ตรวจสอบและลบไฟล์ในโฟลเดอร์ uploads ที่ไม่ได้เชื่อมโยงกับจุดสำรวจใดๆ เพื่อเพิ่มพื้นที่ว่าง
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    disabled={isCleaningUploads}
+                                                    onClick={handleCleanUploads}
+                                                    style={{
+                                                        padding: '9px 18px',
+                                                        borderRadius: '10px',
+                                                        background: '#f59e0b',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        fontWeight: 'bold',
+                                                        fontSize: '13px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)'
+                                                    }}
+                                                >
+                                                    {isCleaningUploads ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-trash-can"></i>}
+                                                    ล้างไฟล์ขยะ
+                                                </button>
+                                            </div>
+
+                                            {/* Database Diagnostic Info */}
+                                            <div style={{
+                                                background: 'var(--bg-card)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '14px',
+                                                padding: '18px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--text-primary)' }}>
+                                                    🔍 ข้อมูลการเชื่อมต่อและสถาปัตยกรรมจัดเก็บ
+                                                </div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', fontSize: '13px' }}>
+                                                    <div style={{ padding: '10px', background: 'var(--bg-modal)', borderRadius: '8px' }}>
+                                                        <span style={{ color: 'var(--text-secondary)' }}>ประเภทฐานข้อมูล:</span>
+                                                        <div style={{ fontWeight: 'bold', color: 'var(--text-primary)', marginTop: '2px' }}>SQLite v3.x</div>
+                                                    </div>
+                                                    <div style={{ padding: '10px', background: 'var(--bg-modal)', borderRadius: '8px' }}>
+                                                        <span style={{ color: 'var(--text-secondary)' }}>เส้นทางจัดเก็บข้อมูล:</span>
+                                                        <div style={{ fontWeight: 'bold', color: 'var(--text-primary)', marginTop: '2px' }}>backend/data/</div>
+                                                    </div>
+                                                    <div style={{ padding: '10px', background: 'var(--bg-modal)', borderRadius: '8px' }}>
+                                                        <span style={{ color: 'var(--text-secondary)' }}>การทำงานแบบ Real-time:</span>
+                                                        <div style={{ fontWeight: 'bold', color: '#10b981', marginTop: '2px' }}>WebSocket (Socket.IO)</div>
+                                                    </div>
+                                                    <div style={{ padding: '10px', background: 'var(--bg-modal)', borderRadius: '8px' }}>
+                                                        <span style={{ color: 'var(--text-secondary)' }}>อัปเดตไฟล์ล่าสุด:</span>
+                                                        <div style={{ fontWeight: 'bold', color: 'var(--text-primary)', marginTop: '2px' }}>
+                                                            {storageStats?.database?.lastModified ? new Date(storageStats.database.lastModified).toLocaleString('th-TH') : '-'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <footer style={{
+                            padding: '14px 24px',
+                            borderTop: '1px solid var(--border-color)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: 'var(--bg-card)'
+                        }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                ระบบจัดการคลังข้อมูล & สำรองฐานข้อมูล เขตหนองแขม
+                            </span>
+                            <button
+                                className="btn"
+                                onClick={() => setIsStorageModalOpen(false)}
+                                style={{
+                                    padding: '7px 18px',
+                                    borderRadius: '10px',
+                                    background: 'var(--bg-card-hover)',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-primary)',
+                                    cursor: 'pointer',
+                                    fontWeight: '600',
+                                    fontSize: '13px'
+                                }}
+                            >
+                                ปิดหน้าต่าง
+                            </button>
+                        </footer>
                     </div>
                 </div>
             )}

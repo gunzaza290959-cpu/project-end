@@ -27,10 +27,13 @@ app.use(express.json());
 
 // Ensure data and uploads dirs exist
 const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const uploadsDir = path.join(dataDir, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const tempDir = path.join(dataDir, 'temp');
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 // Serve static uploaded files
 app.use('/uploads', express.static(uploadsDir));
@@ -44,75 +47,117 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({ storage });
+const uploadRestore = multer({
+    dest: tempDir,
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB
+});
+
+// Utility functions for storage stats
+function formatBytes(bytes, decimals = 2) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+function getFolderStats(dirPath) {
+    let totalSize = 0;
+    let fileCount = 0;
+    if (fs.existsSync(dirPath)) {
+        try {
+            const files = fs.readdirSync(dirPath);
+            for (const file of files) {
+                const filePath = path.join(dirPath, file);
+                try {
+                    const stat = fs.statSync(filePath);
+                    if (stat.isFile()) {
+                        totalSize += stat.size;
+                        fileCount++;
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+    }
+    return { totalSize, fileCount };
+}
 
 // Initialize SQLite database
 const dbPath = path.join(dataDir, 'database.sqlite');
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error("Error opening database " + err.message);
-    } else {
-        console.log("Connected to the SQLite database.");
-        
-        // Create Users Table with role
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password TEXT,
-            role TEXT DEFAULT 'user'
-        )`, (err) => {
-            if (err) console.error("Error creating users table:", err);
-            else {
-                // Migration: Add role column if not exists, then insert default accounts
-                db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`, (alterErr) => {
-                    const salt = bcrypt.genSaltSync(10);
-                    const adminHash = bcrypt.hashSync('admin123', salt);
-                    const userHash = bcrypt.hashSync('user123', salt);
+let db;
 
-                    db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, ['admin', adminHash, 'admin']);
-                    db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, ['user', userHash, 'user']);
-                });
-            }
-        });
+function initDatabase() {
+    const database = new sqlite3.Database(dbPath, (err) => {
+        if (err) {
+            console.error("Error opening database " + err.message);
+        } else {
+            console.log("Connected to the SQLite database.");
+            
+            // Create Users Table with role
+            database.run(`CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE,
+                password TEXT,
+                role TEXT DEFAULT 'user'
+            )`, (err) => {
+                if (err) console.error("Error creating users table:", err);
+                else {
+                    // Migration: Add role column if not exists, then insert default accounts
+                    database.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`, (alterErr) => {
+                        const salt = bcrypt.genSaltSync(10);
+                        const adminHash = bcrypt.hashSync('admin123', salt);
+                        const userHash = bcrypt.hashSync('user123', salt);
 
-        // Create Locations Table
-        db.run(`CREATE TABLE IF NOT EXISTS locations (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            status TEXT,
-            lat REAL,
-            lng REAL,
-            notes TEXT,
-            date TEXT,
-            imageUrl TEXT
-        )`, (err) => {
-            if (!err) {
-                // Migration: Add imageUrl to existing table if not exists
-                db.run(`ALTER TABLE locations ADD COLUMN imageUrl TEXT`, () => {});
-            }
-            if (err) console.error("Error creating locations table:", err);
-            else {
-                // Insert mock data if empty
-                db.get("SELECT COUNT(*) as count FROM locations", (err, row) => {
-                    if (row && row.count === 0) {
-                        const mockData = [
-                            { id: "mock-1", name: "สำนักงานเขตหนองแขม", status: "surveyed", lat: 13.705681, lng: 100.358245, notes: "สำนักงานหลัก ประสานงานลงพื้นที่สำรวจเขตหนองแขม", date: "2026-06-01" },
-                            { id: "mock-2", name: "วัดหนองแขม", status: "surveyed", lat: 13.693352, lng: 100.342123, notes: "จุดประสานงานชุมชน", date: "2026-06-03" },
-                            { id: "mock-3", name: "มหาวิทยาลัยเอเชียอาคเนย์", status: "surveyed", lat: 13.706121, lng: 100.362142, notes: "สำรวจจุดจอดรถ", date: "2026-06-05" },
-                            { id: "mock-4", name: "ตลาดศูนย์การค้าหนองแขม", status: "pending", lat: 13.704251, lng: 100.347852, notes: "จุดร้องเรียนขยะอุดตัน", date: "2026-06-12" }
-                        ];
-                        
-                        const stmt = db.prepare("INSERT INTO locations (id, name, status, lat, lng, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                        mockData.forEach(item => {
-                            stmt.run(item.id, item.name, item.status, item.lat, item.lng, item.notes, item.date);
-                        });
-                        stmt.finalize();
-                        console.log("Mock location data inserted.");
-                    }
-                });
-            }
-        });
-    }
-});
+                        database.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, ['admin', adminHash, 'admin']);
+                        database.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, ['user', userHash, 'user']);
+                    });
+                }
+            });
+
+            // Create Locations Table
+            database.run(`CREATE TABLE IF NOT EXISTS locations (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                status TEXT,
+                lat REAL,
+                lng REAL,
+                notes TEXT,
+                date TEXT,
+                imageUrl TEXT
+            )`, (err) => {
+                if (!err) {
+                    // Migration: Add imageUrl to existing table if not exists
+                    database.run(`ALTER TABLE locations ADD COLUMN imageUrl TEXT`, () => {});
+                }
+                if (err) console.error("Error creating locations table:", err);
+                else {
+                    // Insert mock data if empty
+                    database.get("SELECT COUNT(*) as count FROM locations", (err, row) => {
+                        if (row && row.count === 0) {
+                            const mockData = [
+                                { id: "mock-1", name: "สำนักงานเขตหนองแขม", status: "surveyed", lat: 13.705681, lng: 100.358245, notes: "สำนักงานหลัก ประสานงานลงพื้นที่สำรวจเขตหนองแขม", date: "2026-06-01" },
+                                { id: "mock-2", name: "วัดหนองแขม", status: "surveyed", lat: 13.693352, lng: 100.342123, notes: "จุดประสานงานชุมชน", date: "2026-06-03" },
+                                { id: "mock-3", name: "มหาวิทยาลัยเอเชียอาคเนย์", status: "surveyed", lat: 13.706121, lng: 100.362142, notes: "สำรวจจุดจอดรถ", date: "2026-06-05" },
+                                { id: "mock-4", name: "ตลาดศูนย์การค้าหนองแขม", status: "pending", lat: 13.704251, lng: 100.347852, notes: "จุดร้องเรียนขยะอุดตัน", date: "2026-06-12" }
+                            ];
+                            
+                            const stmt = database.prepare("INSERT INTO locations (id, name, status, lat, lng, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                            mockData.forEach(item => {
+                                stmt.run(item.id, item.name, item.status, item.lat, item.lng, item.notes, item.date);
+                            });
+                            stmt.finalize();
+                            console.log("Mock location data inserted.");
+                        }
+                    });
+                }
+            });
+        }
+    });
+    return database;
+}
+
+db = initDatabase();
 
 // Middleware for JWT Verification
 function authenticateToken(req, res, next) {
@@ -294,6 +339,236 @@ app.post('/api/locations/import', authenticateToken, (req, res) => {
         db.run("COMMIT", (err) => {
             if (err) res.status(500).json({ error: err.message });
             else res.json({ success: true, message: `นำเข้าข้อมูล ${locations.length} จุดสำเร็จ` });
+        });
+    });
+});
+
+// ---------------------------------------------------------
+// STORAGE & BACKUP MANAGEMENT ROUTES
+// ---------------------------------------------------------
+
+// Get storage and database statistics
+app.get('/api/storage/stats', (req, res) => {
+    let dbSize = 0;
+    let dbModified = null;
+    if (fs.existsSync(dbPath)) {
+        try {
+            const s = fs.statSync(dbPath);
+            dbSize = s.size;
+            dbModified = s.mtime;
+        } catch (e) {}
+    }
+
+    const uploadsStats = getFolderStats(uploadsDir);
+
+    db.get(`SELECT 
+        COUNT(*) as totalLocations,
+        SUM(CASE WHEN status = 'surveyed' THEN 1 ELSE 0 END) as surveyedLocations,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingLocations,
+        SUM(CASE WHEN imageUrl IS NOT NULL AND imageUrl != '' THEN 1 ELSE 0 END) as photosLocations
+        FROM locations`, [], (err, locRow) => {
+        if (err) locRow = {};
+
+        db.get(`SELECT 
+            COUNT(*) as totalUsers,
+            SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as adminUsers,
+            SUM(CASE WHEN role != 'admin' OR role IS NULL THEN 1 ELSE 0 END) as normalUsers
+            FROM users`, [], (uErr, userRow) => {
+            if (uErr) userRow = {};
+
+            res.json({
+                success: true,
+                database: {
+                    type: "SQLite 3",
+                    filename: "database.sqlite",
+                    size: dbSize,
+                    formattedSize: formatBytes(dbSize),
+                    lastModified: dbModified,
+                    status: "Connected"
+                },
+                uploads: {
+                    count: uploadsStats.fileCount,
+                    size: uploadsStats.totalSize,
+                    formattedSize: formatBytes(uploadsStats.totalSize)
+                },
+                records: {
+                    totalLocations: locRow?.totalLocations || 0,
+                    surveyed: locRow?.surveyedLocations || 0,
+                    pending: locRow?.pendingLocations || 0,
+                    withPhotos: locRow?.photosLocations || 0,
+                    totalUsers: userRow?.totalUsers || 0,
+                    adminUsers: userRow?.adminUsers || 0,
+                    normalUsers: userRow?.normalUsers || 0
+                },
+                server: {
+                    uptimeSeconds: Math.floor(process.uptime()),
+                    platform: process.platform,
+                    nodeVersion: process.version,
+                    timestamp: new Date().toISOString()
+                }
+            });
+        });
+    });
+});
+
+// Download full SQLite database backup file
+app.get('/api/storage/backup/sqlite', (req, res) => {
+    if (!fs.existsSync(dbPath)) {
+        return res.status(404).json({ error: "ไม่พบไฟล์ฐานข้อมูล SQLite" });
+    }
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `nongkhaem_backup_${dateStr}.sqlite`;
+    res.download(dbPath, filename);
+});
+
+// Download JSON backup
+app.get('/api/storage/backup/json', (req, res) => {
+    db.all(`SELECT * FROM locations`, [], (lErr, locations) => {
+        if (lErr) return res.status(500).json({ error: lErr.message });
+        db.all(`SELECT id, username, role FROM users`, [], (uErr, users) => {
+            if (uErr) return res.status(500).json({ error: uErr.message });
+            const backupData = {
+                metadata: {
+                    appName: "ระบบแผนที่และสารสนเทศลงพื้นที่สำรวจ เขตหนองแขม",
+                    exportDate: new Date().toISOString(),
+                    databaseType: "SQLite",
+                    version: "2.0"
+                },
+                summary: {
+                    totalLocations: locations.length,
+                    totalUsers: users.length
+                },
+                locations: locations,
+                users: users
+            };
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const filename = `nongkhaem_backup_${dateStr}.json`;
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.send(JSON.stringify(backupData, null, 2));
+        });
+    });
+});
+
+// Restore database from SQLite file
+app.post('/api/storage/restore/sqlite', authenticateToken, uploadRestore.single('databaseFile'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "กรุณาเลือกไฟล์ .sqlite เพื่อกู้คืน" });
+    const tempFilePath = req.file.path;
+
+    try {
+        // Verify SQLite format header
+        const buffer = Buffer.alloc(16);
+        const fd = fs.openSync(tempFilePath, 'r');
+        fs.readSync(fd, buffer, 0, 16, 0);
+        fs.closeSync(fd);
+
+        const header = buffer.toString('utf8', 0, 15);
+        if (header !== 'SQLite format 3') {
+            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+            return res.status(400).json({ error: "ไฟล์ที่อัปโหลดไม่ใช่ฐานข้อมูล SQLite ที่ถูกต้อง" });
+        }
+
+        // Backup current database
+        if (fs.existsSync(dbPath)) {
+            try { fs.copyFileSync(dbPath, dbPath + '.bak'); } catch (e) {}
+        }
+
+        // Close current DB and replace
+        db.close((closeErr) => {
+            if (closeErr) console.warn("Error closing old DB connection:", closeErr);
+
+            try {
+                fs.copyFileSync(tempFilePath, dbPath);
+                if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+                db = initDatabase();
+                io.emit('databaseRestored', { message: 'Database restored successfully', timestamp: Date.now() });
+
+                res.json({ success: true, message: "กู้คืนฐานข้อมูล SQLite สำเร็จเรียบร้อยแล้ว!" });
+            } catch (copyErr) {
+                if (fs.existsSync(dbPath + '.bak')) {
+                    try { fs.copyFileSync(dbPath + '.bak', dbPath); } catch (e) {}
+                }
+                db = initDatabase();
+                res.status(500).json({ error: "เกิดข้อผิดพลาดในการกู้คืนไฟล์ฐานข้อมูล: " + copyErr.message });
+            }
+        });
+    } catch (err) {
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        res.status(500).json({ error: "การตรวจสอบไฟล์ล้มเหลว: " + err.message });
+    }
+});
+
+// Restore database from JSON
+app.post('/api/storage/restore/json', authenticateToken, (req, res) => {
+    let data = req.body;
+    let locations = Array.isArray(data) ? data : data.locations;
+
+    if (!Array.isArray(locations)) {
+        return res.status(400).json({ error: "รูปแบบไฟล์ JSON ไม่ถูกต้อง ไม่พบข้อมูลจุดสำรวจ (locations)" });
+    }
+
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+        db.run("DELETE FROM locations");
+        const stmt = db.prepare("INSERT INTO locations (id, name, status, lat, lng, notes, date, imageUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        locations.forEach(item => {
+            stmt.run(
+                item.id || ('loc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7)),
+                item.name || 'ไม่มีชื่อ',
+                item.status || 'pending',
+                item.lat || 0,
+                item.lng || 0,
+                item.notes || '',
+                item.date || new Date().toISOString().slice(0, 10),
+                item.imageUrl || null
+            );
+        });
+        stmt.finalize();
+
+        db.run("COMMIT", (err) => {
+            if (err) {
+                return res.status(500).json({ error: "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + err.message });
+            }
+            io.emit('databaseRestored', { message: 'Data imported', timestamp: Date.now() });
+            res.json({ success: true, message: `กู้คืนข้อมูลสำเร็จ ${locations.length} จุดสำรวจ!` });
+        });
+    });
+});
+
+// Clean up unused/orphaned photos from uploads directory
+app.post('/api/storage/clean-uploads', authenticateToken, (req, res) => {
+    db.all("SELECT imageUrl FROM locations WHERE imageUrl IS NOT NULL AND imageUrl != ''", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const usedFileNames = new Set(rows.map(r => path.basename(r.imageUrl)));
+        let deletedFilesCount = 0;
+        let freedBytes = 0;
+
+        if (fs.existsSync(uploadsDir)) {
+            try {
+                const files = fs.readdirSync(uploadsDir);
+                for (const file of files) {
+                    if (!usedFileNames.has(file)) {
+                        const fullPath = path.join(uploadsDir, file);
+                        try {
+                            const s = fs.statSync(fullPath);
+                            if (s.isFile()) {
+                                freedBytes += s.size;
+                                fs.unlinkSync(fullPath);
+                                deletedFilesCount++;
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (e) {}
+        }
+
+        res.json({
+            success: true,
+            message: `ล้างไฟล์รูปภาพที่ไม่ถูกอ้างอิงสำเร็จ (${deletedFilesCount} ไฟล์, คืนพื้นที่ ${formatBytes(freedBytes)})`,
+            deletedCount: deletedFilesCount,
+            freedFormatted: formatBytes(freedBytes)
         });
     });
 });
